@@ -21,6 +21,7 @@ python3 -m pip install --upgrade \
     torch \
     crawl4ai \
     docling \
+    omniroute \
     tqdm
 
 echo "Setting up Playwright for Crawl4AI..."

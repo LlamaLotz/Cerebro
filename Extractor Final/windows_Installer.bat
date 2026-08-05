@@ -66,7 +66,7 @@ echo Installing / Upgrading Python Packages...
 echo ====================================================
 
 %PYCMD% -m pip install --upgrade pip
-%PYCMD% -m pip install --upgrade yt-dlp faster-whisper torch crawl4ai docling tqdm
+%PYCMD% -m pip install --upgrade yt-dlp faster-whisper torch crawl4ai docling omniroute tqdm
 
 echo.
 echo ====================================================
