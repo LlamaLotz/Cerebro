@@ -1,7 +1,8 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
+use tauri::Manager;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +189,132 @@ fn run_ingestion_script(script_command: String, vault_path: String) -> Result<St
     }
 }
 
+// Helper to discover python executable
+fn find_python() -> String {
+    #[cfg(target_os = "windows")]
+    let candidates = vec!["python", "py", "python3"];
+
+    #[cfg(not(target_os = "windows"))]
+    let candidates = vec!["python3.12", "python3", "python"];
+
+    for cand in candidates {
+        if std::process::Command::new(cand).arg("--version").output().is_ok() {
+            return cand.to_string();
+        }
+    }
+
+    "python3".to_string()
+}
+
+// Helper to find Extractor script
+fn resolve_resource_file(app: &tauri::AppHandle, relative_subpath: &str) -> PathBuf {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let p1 = resource_dir.join(relative_subpath);
+        if p1.exists() { return p1; }
+        let p2 = resource_dir.join("_up_").join(relative_subpath);
+        if p2.exists() { return p2; }
+    }
+
+    // Dev fallback
+    if let Ok(cwd) = std::env::current_dir() {
+        let p1 = cwd.join(relative_subpath);
+        if p1.exists() { return p1; }
+        let p2 = cwd.parent().unwrap_or(&cwd).join(relative_subpath);
+        if p2.exists() { return p2; }
+    }
+
+    PathBuf::from(relative_subpath)
+}
+
+#[tauri::command]
+fn run_builtin_extractor(
+    app: tauri::AppHandle,
+    vault_path: String,
+    ingest_type: String,
+    value: String
+) -> Result<String, String> {
+    if vault_path.trim().is_empty() {
+        return Err("Please select a note vault folder first.".to_string());
+    }
+
+    let script_path = resolve_resource_file(&app, "Extractor Final/master_extractor.py");
+    if !script_path.exists() {
+        return Err(format!("Extractor script not found at path: {:?}", script_path));
+    }
+
+    let python_cmd = find_python();
+
+    let mut cmd = std::process::Command::new(&python_cmd);
+    cmd.arg(script_path.to_string_lossy().to_string());
+    cmd.arg("--vault");
+    cmd.arg(&vault_path);
+
+    if ingest_type == "url" {
+        cmd.arg("--urls");
+        cmd.arg(&value);
+    } else {
+        cmd.arg("--files");
+        cmd.arg(&value);
+    }
+
+    let output = cmd
+        .current_dir(&vault_path)
+        .output()
+        .map_err(|e| format!("Failed to launch extractor using {}: {}", python_cmd, e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        let out = if stdout.is_empty() {
+            "Content extraction completed successfully.".to_string()
+        } else {
+            stdout
+        };
+        Ok(out)
+    } else {
+        Err(format!("Extractor Error:\n{}\n{}", stdout, stderr))
+    }
+}
+
+#[tauri::command]
+fn run_extractor_installer(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    let script_name = "Extractor Final/windows_Installer.bat";
+    #[cfg(target_os = "macos")]
+    let script_name = "Extractor Final/mac_Installer.sh";
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let script_name = "Extractor Final/linux_Installer.sh";
+
+    let installer_path = resolve_resource_file(&app, script_name);
+    if !installer_path.exists() {
+        return Err(format!("Installer script not found at path: {:?}", installer_path));
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("cmd");
+    #[cfg(target_os = "windows")]
+    cmd.args(&["/C", &installer_path.to_string_lossy()]);
+
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = std::process::Command::new("bash");
+    #[cfg(not(target_os = "windows"))]
+    cmd.arg(installer_path.to_string_lossy().to_string());
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run installer script: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(format!("Extractor Installation Succeeded:\n\n{}\n{}", stdout, stderr))
+    } else {
+        Err(format!("Installer Error:\n{}\n{}", stdout, stderr))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -209,7 +336,9 @@ pub fn run() {
             create_file,
             delete_file,
             rename_file,
-            run_ingestion_script
+            run_ingestion_script,
+            run_builtin_extractor,
+            run_extractor_installer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

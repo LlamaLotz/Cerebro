@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, FolderOpen, Terminal, Cpu, Save } from 'lucide-react';
+import { X, FolderOpen, Terminal, Cpu, Save, Wrench, Loader2, CheckCircle2 } from 'lucide-react';
 import { AppSettings, tauriAPI } from '../types';
 
 interface SettingsModalProps {
@@ -20,6 +20,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [apiKey, setApiKey] = useState(settings.omniRoute.apiKey);
   const [baseUrl, setBaseUrl] = useState(settings.omniRoute.baseUrl);
   const [model, setModel] = useState(settings.omniRoute.model);
+  const [isInstallingEngine, setIsInstallingEngine] = useState(false);
+  const [installLogs, setInstallLogs] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -92,19 +94,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Custom Ingestion Script */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-indigo-400" /> Ingestion Script Command
-            </label>
-            <div className="text-xs text-slate-400 mb-1">
-              Command to trigger your ingest script. Use <code className="bg-slate-950 text-indigo-300 px-1 py-0.5 rounded font-mono">{"{vault_path}"}</code> as a placeholder for the actual note vault path.
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-indigo-400" /> Extractor Engine & Installer
+              </label>
+              <button
+                onClick={async () => {
+                  setIsInstallingEngine(true);
+                  setInstallLogs(null);
+                  const res = await tauriAPI.runExtractorInstaller();
+                  setIsInstallingEngine(false);
+                  setInstallLogs(res.output);
+                }}
+                disabled={isInstallingEngine}
+                className="text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors border border-indigo-400/20"
+              >
+                {isInstallingEngine ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-200" />
+                ) : (
+                  <Wrench className="w-3.5 h-3.5" />
+                )}
+                {isInstallingEngine ? 'Installing Dependencies...' : 'Run Auto-Installer'}
+              </button>
             </div>
-            <input
-              type="text"
-              value={ingestionScript}
-              onChange={(e) => setIngestionScript(e.target.value)}
-              placeholder="python /path/to/ingest.py --output {vault_path}"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-            />
+            <div className="text-xs text-slate-400 mb-1">
+              Cerebro uses a built-in Python extractor. Click <strong>Run Auto-Installer</strong> to automatically set up FFmpeg, Python 3.12, yt-dlp, faster-whisper, and docling on your system.
+            </div>
+
+            {installLogs && (
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap select-text">
+                <div className="flex items-center gap-1.5 text-emerald-400 font-semibold mb-1">
+                  <CheckCircle2 className="w-4 h-4" /> Installer Output Logs
+                </div>
+                {installLogs}
+              </div>
+            )}
           </div>
 
           {/* OmniRoute AI Configurations */}

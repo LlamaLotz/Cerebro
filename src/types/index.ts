@@ -97,6 +97,26 @@ export const tauriAPI = {
       return { success: false, output: err.toString() };
     }
   },
+  runBuiltinExtractor: async (data: { vaultPath: string; ingestType: 'url' | 'file'; value: string }): Promise<{ success: boolean; output: string }> => {
+    try {
+      const output = await invoke<string>('run_builtin_extractor', {
+        vaultPath: data.vaultPath,
+        ingestType: data.ingestType,
+        value: data.value,
+      });
+      return { success: true, output };
+    } catch (err: any) {
+      return { success: false, output: err.toString() };
+    }
+  },
+  runExtractorInstaller: async (): Promise<{ success: boolean; output: string }> => {
+    try {
+      const output = await invoke<string>('run_extractor_installer');
+      return { success: true, output };
+    } catch (err: any) {
+      return { success: false, output: err.toString() };
+    }
+  },
   onVaultChanged: (callback: (data: { eventType: string; filename: string }) => void) => {
     // Return unsubscribe no-op since UI action saves trigger list refresh directly
     return () => {};

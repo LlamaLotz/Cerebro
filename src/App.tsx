@@ -111,30 +111,20 @@ export default function App() {
     }
   };
 
-  // 5. Ingest script action
+  // 5. Native Ingest Engine Action
   const handleRunIngest = async (type: 'url' | 'file', value: string) => {
     if (!settings.vaultPath) {
       alert('Please connect a notes vault folder in settings first.');
       return;
     }
-    if (!settings.ingestionScript.trim()) {
-      alert('No custom ingestion script command defined in settings.');
-      return;
-    }
 
     setIsIngesting(true);
-    
-    // Dynamically append CLI parameters based on selected target
-    let customCommand = settings.ingestionScript;
-    if (type === 'url') {
-      customCommand = `${customCommand} --urls "${value}"`;
-    } else {
-      customCommand = `${customCommand} --files "${value}"`;
-    }
 
-    const result = await tauriAPI.runIngestionScript({
-      scriptCommand: customCommand,
+    // Call the built-in native extractor IPC handler directly
+    const result = await tauriAPI.runBuiltinExtractor({
       vaultPath: settings.vaultPath,
+      ingestType: type,
+      value,
     });
     setIsIngesting(false);
 
