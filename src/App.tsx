@@ -4,6 +4,7 @@ import { Editor } from './components/Editor';
 import { GraphView } from './components/GraphView';
 import { AISidebar } from './components/AISidebar';
 import { SettingsModal } from './components/SettingsModal';
+import { IngestModal } from './components/IngestModal';
 import { AppSettings, NoteFile, tauriAPI } from './types';
 import { 
   FileText, Network, SplitSquareVertical, Sparkles, 
@@ -14,7 +15,7 @@ const LOCAL_STORAGE_KEY = 'cerebro_app_settings';
 
 const DEFAULT_SETTINGS: AppSettings = {
   vaultPath: '',
-  ingestionScript: 'python ingest.py --vault {vault_path}',
+  ingestionScript: 'python "/Users/Shiver/Documents/Cerebro/Extractor Final/master_extractor.py" --vault {vault_path}',
   omniRoute: {
     apiKey: '',
     baseUrl: 'https://api.omniroute.ai/v1',
@@ -28,6 +29,7 @@ export default function App() {
   const [activeNote, setActiveNote] = useState<NoteFile | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
   
   // Layout views: 'editor' | 'graph' | 'split'
   const [layout, setLayout] = useState<'editor' | 'graph' | 'split'>('split');
@@ -110,7 +112,7 @@ export default function App() {
   };
 
   // 5. Ingest script action
-  const handleRunIngest = async () => {
+  const handleRunIngest = async (type: 'url' | 'file', value: string) => {
     if (!settings.vaultPath) {
       alert('Please connect a notes vault folder in settings first.');
       return;
@@ -121,8 +123,17 @@ export default function App() {
     }
 
     setIsIngesting(true);
+    
+    // Dynamically append CLI parameters based on selected target
+    let customCommand = settings.ingestionScript;
+    if (type === 'url') {
+      customCommand = `${customCommand} --urls "${value}"`;
+    } else {
+      customCommand = `${customCommand} --files "${value}"`;
+    }
+
     const result = await tauriAPI.runIngestionScript({
-      scriptCommand: settings.ingestionScript,
+      scriptCommand: customCommand,
       vaultPath: settings.vaultPath,
     });
     setIsIngesting(false);
@@ -292,7 +303,7 @@ export default function App() {
         vaultPath={settings.vaultPath}
         onSelectVault={handleSelectVault}
         onRefresh={() => fetchNotes()}
-        onRunIngest={handleRunIngest}
+        onRunIngest={() => setIsIngestModalOpen(true)}
         isIngesting={isIngesting}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
@@ -389,6 +400,13 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+      />
+
+      {/* Ingest Modal overlay */}
+      <IngestModal
+        isOpen={isIngestModalOpen}
+        onClose={() => setIsIngestModalOpen(false)}
+        onIngest={handleRunIngest}
       />
 
       {/* Ingestion Script Output Console Overlay */}

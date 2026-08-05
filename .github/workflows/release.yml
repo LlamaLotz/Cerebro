@@ -25,6 +25,8 @@ jobs:
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install Frontend Dependencies
         run: npm ci
@@ -39,3 +41,4 @@ jobs:
           releaseBody: "See the assets below to download Cerebro for your operating system."
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}

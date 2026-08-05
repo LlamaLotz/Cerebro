@@ -41,6 +41,9 @@ export interface AppSettings {
 
 // Unified API Wrapper mapping frontend calls to Tauri Rust commands
 export const tauriAPI = {
+  selectFile: async (): Promise<string | null> => {
+    return await invoke<string | null>('select_file');
+  },
   selectFolder: async (): Promise<string | null> => {
     return await invoke<string | null>('select_folder');
   },

@@ -15,6 +15,15 @@ pub struct NoteFile {
 }
 
 #[tauri::command]
+fn select_file() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select File to Ingest")
+        .add_filter("All Supported Files", &["pdf", "docx", "pptx", "xlsx", "mp3", "wav", "m4a", "mp4", "mov", "png", "jpg", "jpeg", "html"])
+        .pick_file()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn select_folder() -> Option<String> {
     rfd::FileDialog::new()
         .set_title("Select Note Vault Folder")
@@ -193,6 +202,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            select_file,
             select_folder,
             read_vault_files,
             write_file,
