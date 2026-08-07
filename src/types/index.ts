@@ -97,7 +97,7 @@ export const tauriAPI = {
       return { success: false, output: err.toString() };
     }
   },
-  runBuiltinExtractorAsync: async (data: { vaultPath: string; ingestType: 'url' | 'file'; value: string; ytMethod: string }): Promise<{ success: boolean; output: string }> => {
+  runBuiltinExtractorAsync: async (data: { vaultPath: string; ingestType: 'url' | 'file'; value: string; ytMethod: string }): Promise<{ success: boolean; output: string; error?: string }> => {
     try {
       const output = await invoke<string>('run_builtin_extractor_async', {
         vaultPath: data.vaultPath,
@@ -107,10 +107,10 @@ export const tauriAPI = {
       });
       return { success: true, output };
     } catch (err: any) {
-      return { success: false, output: err.toString() };
+      return { success: false, output: err.toString(), error: err.toString() };
     }
   },
-  runBuiltinExtractor: async (data: { vaultPath: string; ingestType: 'url' | 'file'; value: string }): Promise<{ success: boolean; output: string }> => {
+  runBuiltinExtractor: async (data: { vaultPath: string; ingestType: 'url' | 'file'; value: string }): Promise<{ success: boolean; output: string; error?: string }> => {
     try {
       const output = await invoke<string>('run_builtin_extractor', {
         vaultPath: data.vaultPath,
