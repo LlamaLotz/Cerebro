@@ -244,10 +244,10 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": True,
-        "subtitleslangs": ["en", "en-US", "en-GB", "en-orig", "en.*"],
+        "subtitleslangs": ["en.*", "en"], # Use wildcard to capture all English variants (en-US, en-GB, etc.)
         "quiet": True,
     }
-
+    
     should_try_native = (preferred_method == "auto" or preferred_method == "captions")
     
     if should_try_native:
@@ -256,10 +256,17 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
                 with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
                     info = ydl.extract_info(video_url, download=False)
                     video_title = info.get("title", "YouTube Video")
+                    
+                    # Combine manual subtitles and auto-generated ones
                     all_subs = {**(info.get("automatic_captions") or {}), **(info.get("subtitles") or {})}
-                    target_sub = next((all_subs[k] for k in all_subs if k.startswith("en")), None)
-
+                    
+                    # Priority 1: Manual English, Priority 2: Auto English
+                    # Search for any key that starts with 'en'
+                    target_sub_key = next((k for k in all_subs if k.startswith("en")), None)
+                    target_sub = all_subs.get(target_sub_key) if target_sub_key else None
+                    
                     if target_sub:
+                        # Try to find the json3 format for cleaner parsing
                         json3_url = next((fmt.get("url") for fmt in target_sub if fmt.get("ext") == "json3"), None)
                         if json3_url:
                             req = urllib.request.urlopen(json3_url)
