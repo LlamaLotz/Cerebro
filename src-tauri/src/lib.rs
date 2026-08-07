@@ -296,8 +296,12 @@ async fn run_builtin_extractor_async(
 
     let python_cmd = find_python();
 
+    let clean_script_path = script_path.to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_string();
+
     let mut cmd = Command::new(&python_cmd);
-    cmd.arg(script_path.to_string_lossy().to_string());
+    cmd.arg(clean_script_path);
     cmd.arg("--vault");
     cmd.arg(&vault_path);
     cmd.arg("--yt_method");
@@ -367,9 +371,14 @@ fn run_extractor_installer(app: tauri::AppHandle) -> Result<String, String> {
     }
 
     #[cfg(target_os = "windows")]
+    let clean_installer_path = installer_path.to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_string();
+
+    #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("cmd");
     #[cfg(target_os = "windows")]
-    cmd.args(&["/C", &installer_path.to_string_lossy()]);
+    cmd.args(&["/C", &format!("\"{}\"", clean_installer_path)]);
 
     #[cfg(not(target_os = "windows"))]
     let mut cmd = std::process::Command::new("bash");

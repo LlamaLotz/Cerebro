@@ -21,6 +21,7 @@ import torch
 import yt_dlp
 from tqdm import tqdm
 from pypdf import PdfReader, PdfWriter
+from faster_whisper import WhisperModel
 
 # Docling Imports
 from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -29,7 +30,7 @@ from docling.datamodel.base_models import InputFormat
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
 # Crawl4AI Import
-from crawl4ai import WebCrawler
+from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 
 
 # ==========================================
@@ -148,15 +149,22 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
     
     try:
         with tqdm(total=1, desc="[Crawl4AI Web Scraping]", leave=False) as pbar:
-            # Using async context manager for Crawl4AI
             import asyncio
             
             async def crawl():
-                async with WebCrawler() as crawler:
-                    result = await crawler.run(url=url)
-                    return result.markdown
+                config = CrawlerRunConfig(
+                    cache_mode=CacheMode.BYPASS,
+                    word_count_threshold=10,
+                    remove_overlay_elements=True,
+                )
+                async with AsyncWebCrawler() as crawler:
+                    result = await crawler.arun(url=url, config=config)
+                    if not result.success:
+                        raise ValueError(f"Crawl failed: {result.error_message}")
+                    page_title = result.metadata.get("title", "Web Page")
+                    return result.markdown, page_title
 
-            content = asyncio.run(crawl())
+            content, title = asyncio.run(crawl())
             pbar.update(1)
             
         if not content:
@@ -166,14 +174,6 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
         raw_out_file = item_raw_folder / "crawl4ai_raw.md"
         with open(raw_out_file, "w", encoding="utf-8") as f:
             f.write(f"# Raw Web Crawl: {url}\n\n{content}")
-
-        # Save clean note to main extractions
-        # Try to get a title from the content or use the URL
-        title = "Web Page"
-        if content:
-            first_line = content.split('\n')[0].replace('#', '').strip()
-            if first_line:
-                title = first_line
 
         sanitized_title = sanitize_filename(title)
         master_out_file = main_extractions_folder / f"{sanitized_title}.md"
@@ -187,9 +187,9 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
         # Fallback to simple urllib request if Crawl4AI fails
         try:
             print("Falling back to simple text extraction...")
-            with urllib.request.urlopen(url) as response:
-                html = response.read().decode('utf-8')
-                # Very primitive cleanup
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                html = response.read().decode('utf-8', errors='ignore')
                 text = re.sub(r'<[^>]*>', '', html)
                 content = " ".join(text.split())
                 
@@ -198,6 +198,9 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
                     f.write(f"# Fallback Web Extract\n\n**Source:** {url}\n\n---\n\n{content}")
         except Exception as e2:
             print(f"CRITICAL: Fallback also failed: {e2}")
+
+
+def transcribe_audio_whisper(audio_path: str) -> str:
     """Transcribes audio using Faster-Whisper with real-time ETA progress bar."""
     whisper = get_whisper()
     segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=True)
