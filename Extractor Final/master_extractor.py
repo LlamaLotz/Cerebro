@@ -333,7 +333,9 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
         else:
             winner_name, winner_text, reason = "None", "", "Both extraction methods failed."
     else:
-        winner_name, winner_text, reason = "Unknown", "", "Invalid preference method."
+        # Default to "auto" logic if method is unknown or empty
+        winner_name, winner_text, reason = select_best_extract_locally(native_text, whisper_text)
+        reason = f"Invalid preference method '{preferred_method}', defaulted to Auto selection."
 
     print(f"[Local Decision]: Chosen Winner -> {winner_name} ({reason})")
     
@@ -344,11 +346,11 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
     native_out_file = item_raw_folder / f"yt_dlp_native_{is_native_selected.lower().strip('[]')}.md"
     with open(native_out_file, "w", encoding="utf-8") as f:
         f.write(f"# {video_title} (yt-dlp Native Captions) {is_native_selected}\n\n{native_text or 'No native captions available.'}")
-
+    
     whisper_out_file = item_raw_folder / f"whisper_asr_{is_whisper_selected.lower().strip('[]')}.md"
     with open(whisper_out_file, "w", encoding="utf-8") as f:
         f.write(f"# {video_title} (Faster-Whisper ASR) {is_whisper_selected}\n\n{whisper_text or 'No Whisper transcript available.'}")
-
+    
     meta_file = item_raw_folder / "extraction_meta.json"
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump({
@@ -365,10 +367,10 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
         f.write(
             f"# {video_title}\n\n"
             f"**Source URL:** {video_url}\n\n"
+            f"--- \n\n"
             f"**Selected Service:** `{winner_name}`\n"
             f"**Selection Reason:** {reason}\n\n"
-            f"---\n\n"
-            f"{winner_text}"
+            f"{winner_text or 'No content extracted.'}"
         )
 
 
