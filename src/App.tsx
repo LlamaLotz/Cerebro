@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from './components/Sidebar';
 import { Editor } from './components/Editor';
 import { GraphView } from './components/GraphView';
@@ -112,30 +113,46 @@ export default function App() {
   };
 
   // 5. Native Ingest Engine Action
-  const handleRunIngest = async (type: 'url' | 'file', value: string) => {
+  const handleRunIngest = async (type: 'url' | 'file', value: string, method: string = 'yt-dlp') => {
     if (!settings.vaultPath) {
       alert('Please connect a notes vault folder in settings first.');
       return;
     }
 
     setIsIngesting(true);
+    setIngestOutput({ isOpen: true, success: true, output: 'Initializing ingestion pipeline...' });
 
-    // Call the built-in native extractor IPC handler directly
-    const result = await tauriAPI.runBuiltinExtractor({
-      vaultPath: settings.vaultPath,
-      ingestType: type,
-      value,
-    });
-    setIsIngesting(false);
+    try {
+      // Start listening for real-time progress events from Rust
+      const unlistenProgress = await listen<string>('ingestion-progress', (event) => {
+        setIngestOutput((prev) => ({ ...prev, output: prev.output + '\n' + event.payload }));
+      });
+      const unlistenError = await listen<string>('ingestion-error', (event) => {
+        setIngestOutput((prev) => ({ ...prev, output: prev.output + '\n[ERROR] ' + event.payload }));
+      });
 
-    setIngestOutput({
-      isOpen: true,
-      success: result.success,
-      output: result.output,
-    });
+      // Call the async native extractor
+      const result = await tauriAPI.runBuiltinExtractorAsync({
+        vaultPath: settings.vaultPath,
+        ingestType: type,
+        value,
+        ytMethod: method,
+      });
 
-    // Refresh file list to load any newly ingested markdown output
-    await fetchNotes();
+      if (result.success) {
+        setIngestOutput((prev) => ({ ...prev, success: true, output: prev.output + '\n\nDONE: ' + result.output }));
+      } else {
+        setIngestOutput((prev) => ({ ...prev, success: false, output: prev.output + '\n\nFAILED: ' + result.error }));
+      }
+
+      unlistenProgress();
+      unlistenError();
+    } catch (err) {
+      setIngestOutput({ isOpen: true, success: false, output: `Critical error: ${err}` });
+    } finally {
+      setIsIngesting(false);
+      await fetchNotes();
+    }
   };
 
   // 6. Save Note content (autosave blurs or keys)
@@ -280,7 +297,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen bg-slate-950 text-slate-100 font-sans overflow-hidden select-none">
+    <div className="flex h-screen w-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden select-none">
       
       {/* Sidebar navigation */}
       <Sidebar
@@ -302,51 +319,51 @@ export default function App() {
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Workspace Toolbar/Tabs */}
-        <div className="h-14 border-b border-slate-900 bg-slate-950/40 px-6 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-900 rounded-lg p-1">
-            <button
-              onClick={() => setLayout('editor')}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                layout === 'editor'
-                  ? 'bg-slate-900 text-sky-400'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" /> Note Editor
-            </button>
-            <button
-              onClick={() => setLayout('split')}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                layout === 'split'
-                  ? 'bg-slate-900 text-sky-400'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <SplitSquareVertical className="w-3.5 h-3.5" /> Split Screen
-            </button>
-            <button
-              onClick={() => setLayout('graph')}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                layout === 'graph'
-                  ? 'bg-slate-900 text-sky-400'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Network className="w-3.5 h-3.5" /> Graph Network
-            </button>
-          </div>
-
-          <button
-            onClick={() => setShowAICoPilot(!showAICoPilot)}
-            className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 border rounded-lg transition-all ${
-              showAICoPilot 
-                ? 'bg-indigo-600/10 border-indigo-500/30 text-indigo-400' 
-                : 'bg-slate-950 border-slate-900 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Sparkles className="w-4 h-4" /> OmniRoute AI Co-Pilot
-          </button>
-        </div>
+<div className="h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
+           <div className="flex items-center gap-1.5 bg-neutral-950 border border-neutral-900 rounded-lg p-1">
+             <button
+               onClick={() => setLayout('editor')}
+               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                 layout === 'editor'
+                   ? 'bg-neutral-900 text-orange-400'
+                   : 'text-neutral-400 hover:text-neutral-200'
+               }`}
+             >
+               <FileText className="w-3.5 h-3.5" /> Note Editor
+             </button>
+             <button
+               onClick={() => setLayout('split')}
+               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                 layout === 'split'
+                   ? 'bg-neutral-900 text-orange-400'
+                   : 'text-neutral-400 hover:text-neutral-200'
+               }`}
+             >
+               <SplitSquareVertical className="w-3.5 h-3.5" /> Split Screen
+             </button>
+             <button
+               onClick={() => setLayout('graph')}
+               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+                 layout === 'graph'
+                   ? 'bg-neutral-900 text-orange-400'
+                   : 'text-neutral-400 hover:text-neutral-200'
+               }`}
+             >
+               <Network className="w-3.5 h-3.5" /> Graph Network
+             </button>
+           </div>
+S
+           <button
+             onClick={() => setShowAICoPilot(!showAICoPilot)}
+             className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 border rounded-lg transition-all ${
+               showAICoPilot 
+                 ? 'bg-orange-600/10 border-orange-500/30 text-orange-400' 
+                 : 'bg-neutral-950 border-neutral-900 text-neutral-400 hover:text-neutral-200'
+             }`}
+           >
+             <Sparkles className="w-4 h-4" /> OmniRoute AI Co-Pilot
+           </button>
+         </div>
 
         {/* Workspace Main Panels */}
         <div className="flex-1 flex overflow-hidden">
@@ -401,39 +418,39 @@ export default function App() {
 
       {/* Ingestion Script Output Console Overlay */}
       {ingestOutput.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 shrink-0">
-              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                {ingestOutput.success ? (
-                  <CheckCircle className="w-5 h-5 text-emerald-400" />
-                ) : (
-                  <AlertCircle className="w-5 h-5 text-rose-400" />
-                )}
-                Ingestion Script Status: {ingestOutput.success ? 'Success' : 'Failed'}
-              </h3>
-              <button 
-                onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
-                className="text-slate-400 hover:text-slate-200 hover:bg-slate-800 p-1 rounded-lg transition-colors"
-              >
-                <X className="w-4.5 h-4.5" />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-slate-950 text-slate-300 whitespace-pre-wrap select-text leading-relaxed">
-              {ingestOutput.output}
-            </div>
-
-            <div className="px-6 py-3 border-t border-slate-800/60 bg-slate-950/40 flex justify-end shrink-0 rounded-b-xl">
-              <button
-                onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
-                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-slate-750"
-              >
-                Close Logs
-              </button>
-            </div>
-          </div>
-        </div>
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+           <div className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
+             <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 shrink-0">
+               <h3 className="text-sm font-bold text-neutral-200 flex items-center gap-2">
+                 {ingestOutput.success ? (
+                   <CheckCircle className="w-5 h-5 text-orange-400" />
+                 ) : (
+                   <AlertCircle className="w-5 h-5 text-rose-400" />
+                 )}
+                 Ingestion Script Status: {ingestOutput.success ? 'Success' : 'Failed'}
+               </h3>
+               <button 
+                 onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
+                 className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 p-1 rounded-lg transition-colors"
+               >
+                 <X className="w-4.5 h-4.5" />
+               </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-neutral-950 text-neutral-300 whitespace-pre-wrap select-text leading-relaxed">
+               {ingestOutput.output}
+             </div>
+ 
+             <div className="px-6 py-3 border-t border-neutral-800/60 bg-neutral-950/40 flex justify-end shrink-0 rounded-b-xl">
+               <button
+                 onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
+                 className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold rounded-lg transition-colors border border-neutral-750"
+               >
+                 Close Logs
+               </button>
+             </div>
+           </div>
+         </div>
       )}
 
     </div>

@@ -28,8 +28,8 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.datamodel.base_models import InputFormat
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
-# Faster-Whisper Import
-from faster_whisper import WhisperModel
+# Crawl4AI Import
+from crawl4ai import WebCrawler
 
 
 # ==========================================
@@ -142,7 +142,62 @@ def select_best_extract_locally(native_sub: str, whisper_sub: str) -> tuple[str,
 # 4. EXTRACTION MODULES WITH PROGRESS BARS
 # ==========================================
 
-def transcribe_audio_whisper(audio_path: str) -> str:
+def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Path):
+    """Crawls a web page using Crawl4AI and converts it to clean markdown."""
+    print(f"Web URL detected. Routing to Crawl4AI pipeline: {url}")
+    
+    try:
+        with tqdm(total=1, desc="[Crawl4AI Web Scraping]", leave=False) as pbar:
+            # Using async context manager for Crawl4AI
+            import asyncio
+            
+            async def crawl():
+                async with WebCrawler() as crawler:
+                    result = await crawler.run(url=url)
+                    return result.markdown
+
+            content = asyncio.run(crawl())
+            pbar.update(1)
+            
+        if not content:
+            raise ValueError("Crawl4AI returned empty content.")
+
+        # Save raw to item folder
+        raw_out_file = item_raw_folder / "crawl4ai_raw.md"
+        with open(raw_out_file, "w", encoding="utf-8") as f:
+            f.write(f"# Raw Web Crawl: {url}\n\n{content}")
+
+        # Save clean note to main extractions
+        # Try to get a title from the content or use the URL
+        title = "Web Page"
+        if content:
+            first_line = content.split('\n')[0].replace('#', '').strip()
+            if first_line:
+                title = first_line
+
+        sanitized_title = sanitize_filename(title)
+        master_out_file = main_extractions_folder / f"{sanitized_title}.md"
+        with open(master_out_file, "w", encoding="utf-8") as f:
+            f.write(f"# {title}\n\n**Source URL:** {url}\n\n---\n\n{content}")
+            
+        print(f"Successfully crawled and saved: {title}")
+
+    except Exception as e:
+        print(f"ERROR: Crawl4AI failed for {url}: {e}")
+        # Fallback to simple urllib request if Crawl4AI fails
+        try:
+            print("Falling back to simple text extraction...")
+            with urllib.request.urlopen(url) as response:
+                html = response.read().decode('utf-8')
+                # Very primitive cleanup
+                text = re.sub(r'<[^>]*>', '', html)
+                content = " ".join(text.split())
+                
+                master_out_file = main_extractions_folder / f"fallback_{int(time.time())}.md"
+                with open(master_out_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Fallback Web Extract\n\n**Source:** {url}\n\n---\n\n{content}")
+        except Exception as e2:
+            print(f"CRITICAL: Fallback also failed: {e2}")
     """Transcribes audio using Faster-Whisper with real-time ETA progress bar."""
     whisper = get_whisper()
     segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=True)
@@ -164,13 +219,22 @@ def transcribe_audio_whisper(audio_path: str) -> str:
     return " ".join(transcript_text)
 
 
-def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_folder: Path):
-    """Fetches BOTH native captions and Whisper ASR transcripts, dividing output folders."""
+def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_folder: Path, preferred_method: str = "auto"):
+    """Fetches native captions and Whisper ASR transcripts, respecting user preference with fallback."""
+    # Only process if it's actually a YouTube URL
+    if "youtube.com" not in video_url.lower() and "youtu.be" not in video_url.lower():
+        return process_web_url(video_url, item_raw_folder, main_extractions_folder)
+
     DOWNLOADS_DIR.mkdir(exist_ok=True)
     native_text = ""
     whisper_text = ""
     video_title = "YouTube Video"
-
+    
+    # Define priorities based on preference
+    # "auto": native -> whisper (original logic)
+    # "captions": native (primary), whisper (fallback)
+    # "whisper": whisper (primary), native (fallback)
+    
     # Step A: Fetch Native Captions via yt-dlp
     t_start_sub = time.time()
     ydl_opts_subs = {
@@ -181,78 +245,99 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
         "quiet": True,
     }
 
-    try:
-        with tqdm(total=1, desc="[Fetching Subtitle Stream]", leave=False) as pbar:
-            with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                video_title = info.get("title", "YouTube Video")
-                all_subs = {**(info.get("automatic_captions") or {}), **(info.get("subtitles") or {})}
-                target_sub = next((all_subs[k] for k in all_subs if k.startswith("en")), None)
+    should_try_native = (preferred_method == "auto" or preferred_method == "captions")
+    
+    if should_try_native:
+        try:
+            with tqdm(total=1, desc="[Fetching Subtitle Stream]", leave=False) as pbar:
+                with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                    video_title = info.get("title", "YouTube Video")
+                    all_subs = {**(info.get("automatic_captions") or {}), **(info.get("subtitles") or {})}
+                    target_sub = next((all_subs[k] for k in all_subs if k.startswith("en")), None)
 
-                if target_sub:
-                    json3_url = next((fmt.get("url") for fmt in target_sub if fmt.get("ext") == "json3"), None)
-                    if json3_url:
-                        req = urllib.request.urlopen(json3_url)
-                        data = json.loads(req.read().decode("utf-8"))
-                        parts = [
-                            seg.get("utf8", "")
-                            for event in data.get("events", []) if "segs" in event
-                            for seg in event["segs"]
-                        ]
-                        native_text = " ".join(parts).strip()
-            pbar.update(1)
-    except Exception as e:
-        print(f"WARNING: Native caption stream skipped: {e}")
+                    if target_sub:
+                        json3_url = next((fmt.get("url") for fmt in target_sub if fmt.get("ext") == "json3"), None)
+                        if json3_url:
+                            req = urllib.request.urlopen(json3_url)
+                            data = json.loads(req.read().decode("utf-8"))
+                            parts = [
+                                seg.get("utf8", "")
+                                for event in data.get("events", []) if "segs" in event
+                                for seg in event["segs"]
+                            ]
+                            native_text = " ".join(parts).strip()
+                pbar.update(1)
+        except Exception as e:
+            print(f"WARNING: Native caption stream skipped: {e}")
 
-    print(f"Native Fetch Time: {time.time() - t_start_sub:.2f}s")
-
-    # Step B: Download Audio Track with Custom Download Bar
+    # Step B: Download Audio Track and transcribe with Whisper
     t_start_audio = time.time()
     audio_file = DOWNLOADS_DIR / f"temp_{int(time.time())}.mp3"
+    
+    should_try_whisper = (preferred_method == "auto" or preferred_method == "whisper" or (preferred_method == "captions" and not native_text))
+    
+    if should_try_whisper:
+        pbar_dl = tqdm(total=100, unit="%", desc="[Downloading Audio Track]", leave=False)
+        def yt_dlp_hook(d):
+            if d['status'] == 'downloading':
+                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+                downloaded = d.get('downloaded_bytes', 0)
+                percent = int((downloaded / total) * 100)
+                pbar_dl.n = percent
+                pbar_dl.refresh()
+            elif d['status'] == 'finished':
+                pbar_dl.n = 100
+                pbar_dl.refresh()
 
-    pbar_dl = tqdm(total=100, unit="%", desc="[Downloading Audio Track]", leave=False)
+        ydl_opts_audio = {
+            "format": "bestaudio/best",
+            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+            "outtmpl": str(audio_file.with_suffix("")),
+            "progress_hooks": [yt_dlp_hook],
+            "quiet": True,
+        }
 
-    def yt_dlp_hook(d):
-        if d['status'] == 'downloading':
-            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
-            downloaded = d.get('downloaded_bytes', 0)
-            percent = int((downloaded / total) * 100)
-            pbar_dl.n = percent
-            pbar_dl.refresh()
-        elif d['status'] == 'finished':
-            pbar_dl.n = 100
-            pbar_dl.refresh()
-
-    ydl_opts_audio = {
-        "format": "bestaudio/best",
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-        "outtmpl": str(audio_file.with_suffix("")),
-        "progress_hooks": [yt_dlp_hook],
-        "quiet": True,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-            ydl.extract_info(video_url, download=True)
-        pbar_dl.close()
-
-        whisper_text = transcribe_audio_whisper(str(audio_file))
-        if audio_file.exists():
-            audio_file.unlink()
-    except Exception as e:
-        pbar_dl.close()
-        print(f"WARNING: Whisper pipeline skipped: {e}")
-
-    print(f"Audio/Whisper Time: {time.time() - t_start_audio:.2f}s")
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+                if not video_title or video_title == "YouTube Video":
+                    video_title = info.get("title", "YouTube Video")
+            pbar_dl.close()
+            whisper_text = transcribe_audio_whisper(str(audio_file))
+            if audio_file.exists():
+                audio_file.unlink()
+        except Exception as e:
+            pbar_dl.close()
+            print(f"WARNING: Whisper pipeline skipped: {e}")
 
     # Step C: Local Evaluation / Winner Selection
-    winner_name, winner_text, reason = select_best_extract_locally(native_text, whisper_text)
-    print(f"[Local Decision]: Chosen Winner -> {winner_name} ({reason})")
+    # If "auto", we use the original quality comparison
+    if preferred_method == "auto":
+        winner_name, winner_text, reason = select_best_extract_locally(native_text, whisper_text)
+    elif preferred_method == "captions":
+        if native_text:
+            winner_name, winner_text, reason = "yt-dlp Native", native_text, "Preferred method (Captions) succeeded."
+        elif whisper_text:
+            winner_name, winner_text, reason = "Whisper ASR", whisper_text, "Preferred (Captions) failed, fell back to Whisper."
+        else:
+            winner_name, winner_text, reason = "None", "", "Both extraction methods failed."
+    elif preferred_method == "whisper":
+        if whisper_text:
+            winner_name, winner_text, reason = "Whisper ASR", whisper_text, "Preferred method (Whisper) succeeded."
+        elif native_text:
+            winner_name, winner_text, reason = "yt-dlp Native", native_text, "Preferred (Whisper) failed, fell back to Captions."
+        else:
+            winner_name, winner_text, reason = "None", "", "Both extraction methods failed."
+    else:
+        winner_name, winner_text, reason = "Unknown", "", "Invalid preference method."
 
-    # Step D: Save Individual Output Files into Raw Service Directory
+    print(f"[Local Decision]: Chosen Winner -> {winner_name} ({reason})")
+    
+    # Save outputs (identical to original)
     is_native_selected = "[SELECTED]" if winner_name == "yt-dlp Native" else "[NOT SELECTED]"
     is_whisper_selected = "[SELECTED]" if winner_name == "Whisper ASR" else "[NOT SELECTED]"
-
+    
     native_out_file = item_raw_folder / f"yt_dlp_native_{is_native_selected.lower().strip('[]')}.md"
     with open(native_out_file, "w", encoding="utf-8") as f:
         f.write(f"# {video_title} (yt-dlp Native Captions) {is_native_selected}\n\n{native_text or 'No native captions available.'}")
@@ -261,7 +346,6 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
     with open(whisper_out_file, "w", encoding="utf-8") as f:
         f.write(f"# {video_title} (Faster-Whisper ASR) {is_whisper_selected}\n\n{whisper_text or 'No Whisper transcript available.'}")
 
-    # Write a quick JSON metadata block to raw service folder
     meta_file = item_raw_folder / "extraction_meta.json"
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump({
@@ -272,7 +356,6 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
             "timestamp": time.time()
         }, f, indent=2)
 
-    # Step E: Save Final clean Winner Note to Main Extractions Directory (For Cerebro app!)
     sanitized_title = sanitize_filename(video_title)
     master_out_file = main_extractions_folder / f"{sanitized_title}.md"
     with open(master_out_file, "w", encoding="utf-8") as f:
@@ -441,6 +524,7 @@ def run_cerebro():
     parser.add_argument("--vault", type=str, help="Outputs clean final notes directly to this folder")
     parser.add_argument("--files", type=str, nargs="+", help="Automated batch files processing list")
     parser.add_argument("--urls", type=str, nargs="+", help="Automated batch URLs processing list")
+    parser.add_argument("--yt_method", type=str, default="auto", help="YouTube extraction method: 'auto', 'captions', or 'whisper'")
     
     args = parser.parse_args()
 
@@ -515,7 +599,7 @@ def run_cerebro():
 
             # Route Logic
             if source.startswith("http://") or source.startswith("https://"):
-                process_youtube_url(source, item_raw_folder, main_extractions_folder)
+                process_youtube_url(source, item_raw_folder, main_extractions_folder, preferred_method=args.yt_method if args.yt_method else "auto")
             else:
                 process_local_file(source, item_raw_folder, main_extractions_folder)
 

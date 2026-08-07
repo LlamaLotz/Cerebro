@@ -3,6 +3,7 @@ import {
   Sparkles, Send, Loader2, RefreshCw, FileText, 
   BookOpen, Link2, Hash, AlertTriangle 
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { NoteFile, OmniRouteConfig } from '../types';
 import { summarizeNote, suggestConnections, suggestMetadata, sendChatMessage } from '../services/omniRouteService';
 
@@ -222,15 +223,16 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
                 <span className="text-[9px] font-bold text-slate-500 mb-0.5">
                   {isUser ? 'YOU' : 'CEREBRO AI'}
                 </span>
-                <div 
-                  className={`text-xs p-3 rounded-2xl leading-relaxed whitespace-pre-wrap ${
-                    isUser 
-                      ? 'bg-indigo-600 text-white rounded-tr-none' 
-                      : 'bg-slate-900 border border-slate-850 text-slate-200 rounded-tl-none font-sans'
-                  }`}
-                >
-                  {msg.content}
-                </div>
+<div 
+                   className={`text-xs p-3 rounded-2xl leading-relaxed ${
+                     isUser 
+                       ? 'bg-indigo-600 text-white rounded-tr-none' 
+                       : 'bg-slate-900 border border-slate-850 text-slate-200 rounded-tl-none font-sans prose prose-invert prose-sm max-w-none'
+                   }`}
+                 >
+                   {!isUser && <ReactMarkdown>{msg.content}</ReactMarkdown>}
+                   {isUser && msg.content}
+                 </div>
               </div>
             );
           })

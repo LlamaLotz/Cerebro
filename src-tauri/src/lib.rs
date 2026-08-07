@@ -1,8 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+use std::process::{Command, Stdio};
 use walkdir::WalkDir;
-use tauri::Manager;
+use tauri::{Manager, Window, Emitter};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +14,55 @@ pub struct NoteFile {
     pub title: String,
     pub content: String,
     pub updated_at: f64,
+}
+
+#[tauri::command]
+fn setup_omniroute_environment(app: tauri::AppHandle) -> Result<String, String> {
+    println!("Initializing OmniRoute environment check...");
+    
+    let mut output = String::new();
+
+    // 1. Check/Install Node.js (via Homebrew for Mac as a baseline)
+    #[cfg(target_os = "macos")]
+    {
+        let node_check = Command::new("node").arg("-v").output();
+        if node_check.is_err() {
+            output.push_str("Node.js not found. Attempting installation via brew...\n");
+            let install_node = Command::new("brew").args(["install", "node"]).output();
+            if install_node.is_err() || !install_node.unwrap().status.success() {
+                return Err("Failed to install Node.js. Please install it manually from https://nodejs.org".to_string());
+            }
+            output.push_str("Node.js installed successfully.\n");
+        } else {
+            output.push_str("Node.js is already installed.\n");
+        }
+    }
+
+    // 2. Check/Install OmniRoute
+    let omniroute_check = Command::new("omniroute").arg("--version").output();
+    if omniroute_check.is_err() {
+        output.push_str("OmniRoute not found. Installing via npm...\n");
+        let install_omni = Command::new("npm").args(["install", "-g", "omniroute"]).output();
+        if install_omni.is_err() || !install_omni.unwrap().status.success() {
+            return Err("Failed to install OmniRoute. Please run 'npm install -g omniroute' manually.".to_string());
+        }
+        output.push_str("OmniRoute installed successfully.\n");
+    } else {
+        output.push_str("OmniRoute is already installed.\n");
+    }
+
+    // 3. Start OmniRoute Server in background (assuming it has a server mode)
+    // If omniroute is a CLI tool and not a daemon, this might differ.
+    // We'll try to launch it as a detached process.
+    let _ = Command::new("omniroute")
+        .arg("server")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+
+    output.push_str("OmniRoute server started in background.\n");
+    
+    Ok(output)
 }
 
 #[tauri::command]
@@ -227,11 +277,13 @@ fn resolve_resource_file(app: &tauri::AppHandle, relative_subpath: &str) -> Path
 }
 
 #[tauri::command]
-fn run_builtin_extractor(
+async fn run_builtin_extractor_async(
     app: tauri::AppHandle,
+    window: Window,
     vault_path: String,
     ingest_type: String,
-    value: String
+    value: String,
+    yt_method: String
 ) -> Result<String, String> {
     if vault_path.trim().is_empty() {
         return Err("Please select a note vault folder first.".to_string());
@@ -244,10 +296,12 @@ fn run_builtin_extractor(
 
     let python_cmd = find_python();
 
-    let mut cmd = std::process::Command::new(&python_cmd);
+    let mut cmd = Command::new(&python_cmd);
     cmd.arg(script_path.to_string_lossy().to_string());
     cmd.arg("--vault");
     cmd.arg(&vault_path);
+    cmd.arg("--yt_method");
+    cmd.arg(&yt_method);
 
     if ingest_type == "url" {
         cmd.arg("--urls");
@@ -257,23 +311,44 @@ fn run_builtin_extractor(
         cmd.arg(&value);
     }
 
-    let output = cmd
+    let mut child = cmd
         .current_dir(&vault_path)
-        .output()
-        .map_err(|e| format!("Failed to launch extractor using {}: {}", python_cmd, e))?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to launch extractor: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
 
-    if output.status.success() {
-        let out = if stdout.is_empty() {
-            "Content extraction completed successfully.".to_string()
-        } else {
-            stdout
-        };
-        Ok(out)
+    let window_clone = window.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone.emit("ingestion-progress", l);
+            }
+        }
+    });
+
+    let window_clone_err = window.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone_err.emit("ingestion-error", l);
+            }
+        }
+    });
+
+    let status = child.wait().map_err(|e| format!("Process wait failed: {}", e))?;
+    
+    if status.success() {
+        Ok("Extraction completed successfully.".to_string())
     } else {
-        Err(format!("Extractor Error:\n{}\n{}", stdout, stderr))
+        Err("Extraction failed. Check logs for details.".to_string())
     }
 }
 
@@ -337,8 +412,9 @@ pub fn run() {
             delete_file,
             rename_file,
             run_ingestion_script,
-            run_builtin_extractor,
-            run_extractor_installer
+            run_builtin_extractor_async,
+            run_extractor_installer,
+            setup_omniroute_environment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
