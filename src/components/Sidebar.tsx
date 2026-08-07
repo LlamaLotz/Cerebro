@@ -46,11 +46,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
             <span className="font-extrabold text-white text-base">C</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-indigo-400 leading-none">CEREBRO</h1>
+            <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-orange-400 to-amber-500 leading-none">CEREBRO</h1>
             <span className="text-[10px] text-slate-500 font-medium">Knowledge & AI Vault</span>
           </div>
         </div>
@@ -69,7 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Vault Location</span>
           <button 
             onClick={onSelectVault}
-            className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1"
+            className="text-[10px] font-semibold text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1"
           >
             <FolderOpen className="w-3 h-3" /> Change
           </button>
@@ -87,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <button 
             onClick={onSelectVault}
-            className="w-full text-left text-xs bg-indigo-950/30 hover:bg-indigo-950/50 border border-indigo-900/50 text-indigo-300 rounded px-3 py-2 flex items-center justify-center gap-1.5 transition-all font-medium"
+            className="w-full text-left text-xs bg-orange-950/30 hover:bg-orange-950/50 border border-orange-900/50 text-orange-300 rounded px-3 py-2 flex items-center justify-center gap-1.5 transition-all font-medium"
           >
             <FolderOpen className="w-4 h-4" /> Connect Note Folder
           </button>
@@ -98,23 +98,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex gap-2 pt-1">
             <button
               onClick={onRefresh}
-              className="flex-1 text-[11px] font-medium bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-slate-100 border border-slate-800/80 rounded py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-slate-100 border border-slate-800/80 rounded p-1.5 flex items-center justify-center transition-colors"
               title="Sync / Refresh Notes"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Sync
+              <RefreshCw className="w-4 h-4" />
             </button>
             <button
               onClick={onRunIngest}
               disabled={isIngesting}
-              className="flex-1 text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800/40 text-white border border-indigo-500/30 rounded py-1.5 flex items-center justify-center gap-1.5 transition-colors shadow-sm shadow-indigo-600/10"
-              title="Run custom ingestion script"
+              className="flex-1 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-800/40 text-white border border-orange-500/30 rounded p-1.5 flex items-center justify-center transition-colors shadow-sm shadow-orange-600/10"
+              title={isIngesting ? "Ingesting..." : "Run custom ingestion script"}
             >
               {isIngesting ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-300" />
+                <RefreshCw className="w-4 h-4 animate-spin text-orange-300" />
               ) : (
-                <Play className="w-3.5 h-3.5 fill-current text-white" />
+                <Play className="w-4 h-4 fill-current text-white" />
               )}
-              {isIngesting ? 'Ingesting...' : 'Ingest'}
             </button>
           </div>
         )}
@@ -135,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           onClick={onNewNote}
           disabled={!vaultPath}
-          className="bg-sky-500/10 hover:bg-sky-500/20 disabled:opacity-30 disabled:pointer-events-none text-sky-400 border border-sky-500/20 px-2 rounded-lg transition-all flex items-center justify-center"
+          className="bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-30 disabled:pointer-events-none text-orange-400 border border-orange-500/20 px-2 rounded-lg transition-all flex items-center justify-center"
           title="Create New Note"
         >
           <Plus className="w-4.5 h-4.5" />
@@ -160,13 +159,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={note.path}
                 className={`group flex items-center justify-between text-xs px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
                   isActive 
-                    ? 'bg-slate-900 border-l-2 border-sky-400 text-sky-100 font-medium' 
+                    ? 'bg-slate-900 border-l-2 border-orange-400 text-orange-100 font-medium' 
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
                 }`}
                 onClick={() => onSelectNote(note)}
               >
                 <div className="flex items-center gap-2 truncate flex-1 pr-2">
-                  <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-sky-400' : 'text-slate-500'}`} />
+                  <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-orange-400' : 'text-slate-500'}`} />
                   <span className="truncate">{note.title}</span>
                 </div>
                 
@@ -177,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       e.stopPropagation();
                       onRenameNote(note);
                     }}
-                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-sky-400 rounded transition-colors"
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-orange-400 rounded transition-colors"
                     title="Rename Note"
                   >
                     <Edit3 className="w-3.5 h-3.5" />

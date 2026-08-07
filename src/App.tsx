@@ -118,10 +118,10 @@ export default function App() {
       alert('Please connect a notes vault folder in settings first.');
       return;
     }
-
+    
     setIsIngesting(true);
     setIngestOutput({ isOpen: true, success: true, output: 'Initializing ingestion pipeline...' });
-
+    
     try {
       // Start listening for real-time progress events from Rust
       const unlistenProgress = await listen<string>('ingestion-progress', (event) => {
@@ -130,7 +130,7 @@ export default function App() {
       const unlistenError = await listen<string>('ingestion-error', (event) => {
         setIngestOutput((prev) => ({ ...prev, output: prev.output + '\n[ERROR] ' + event.payload }));
       });
-
+    
       // Call the async native extractor
       const result = await tauriAPI.runBuiltinExtractorAsync({
         vaultPath: settings.vaultPath,
@@ -138,20 +138,23 @@ export default function App() {
         value,
         ytMethod: method,
       });
-
+    
       if (result.success) {
         setIngestOutput((prev) => ({ ...prev, success: true, output: prev.output + '\n\nDONE: ' + result.output }));
       } else {
         setIngestOutput((prev) => ({ ...prev, success: false, output: prev.output + '\n\nFAILED: ' + result.error }));
       }
-
+    
       unlistenProgress();
       unlistenError();
     } catch (err) {
       setIngestOutput({ isOpen: true, success: false, output: `Critical error: ${err}` });
     } finally {
       setIsIngesting(false);
-      await fetchNotes();
+      // Small delay to allow OS filesystem to finalize writes before refreshing notes
+      setTimeout(async () => {
+        await fetchNotes();
+      }, 500);
     }
   };
 
@@ -319,49 +322,53 @@ export default function App() {
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Workspace Toolbar/Tabs */}
-<div className="h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
-           <div className="flex items-center gap-1.5 bg-neutral-950 border border-neutral-900 rounded-lg p-1">
+        <div className="h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
+           <div className="flex items-center gap-1 bg-neutral-950 border border-neutral-900 rounded-lg p-1">
              <button
                onClick={() => setLayout('editor')}
-               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+               className={`p-2 rounded-md transition-all ${
                  layout === 'editor'
                    ? 'bg-neutral-900 text-orange-400'
                    : 'text-neutral-400 hover:text-neutral-200'
                }`}
+               title="Note Editor"
              >
-               <FileText className="w-3.5 h-3.5" /> Note Editor
+               <FileText className="w-4 h-4" />
              </button>
              <button
                onClick={() => setLayout('split')}
-               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+               className={`p-2 rounded-md transition-all ${
                  layout === 'split'
                    ? 'bg-neutral-900 text-orange-400'
                    : 'text-neutral-400 hover:text-neutral-200'
                }`}
+               title="Split View"
              >
-               <SplitSquareVertical className="w-3.5 h-3.5" /> Split Screen
+               <SplitSquareVertical className="w-4 h-4" />
              </button>
              <button
                onClick={() => setLayout('graph')}
-               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+               className={`p-2 rounded-md transition-all ${
                  layout === 'graph'
                    ? 'bg-neutral-900 text-orange-400'
                    : 'text-neutral-400 hover:text-neutral-200'
                }`}
+               title="Graph Network"
              >
-               <Network className="w-3.5 h-3.5" /> Graph Network
+               <Network className="w-4 h-4" />
              </button>
            </div>
-S
+
            <button
              onClick={() => setShowAICoPilot(!showAICoPilot)}
-             className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 border rounded-lg transition-all ${
+             className={`p-2 border rounded-lg transition-all ${
                showAICoPilot 
                  ? 'bg-orange-600/10 border-orange-500/30 text-orange-400' 
                  : 'bg-neutral-950 border-neutral-900 text-neutral-400 hover:text-neutral-200'
              }`}
+             title="OmniRoute AI Co-Pilot"
            >
-             <Sparkles className="w-4 h-4" /> OmniRoute AI Co-Pilot
+             <Sparkles className="w-4 h-4" />
            </button>
          </div>
 

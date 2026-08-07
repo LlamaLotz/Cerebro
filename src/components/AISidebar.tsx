@@ -127,7 +127,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
       {/* Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between bg-slate-950">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4.5 h-4.5 text-indigo-400 animate-pulse" />
+          <Sparkles className="w-4.5 h-4.5 text-orange-400 animate-pulse" />
           <h2 className="text-sm font-bold text-slate-100">OmniRoute AI Co-Pilot</h2>
         </div>
         <button
@@ -141,16 +141,16 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
 
       {/* Connection warning */}
       {!isConfigured && (
-        <div className="m-3 p-3 bg-indigo-950/20 border border-indigo-900/50 rounded-xl flex items-start gap-2.5">
-          <AlertTriangle className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+        <div className="m-3 p-3 bg-orange-950/20 border border-orange-900/50 rounded-xl flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
           <div className="space-y-1.5">
-            <h4 className="text-[11px] font-semibold text-indigo-200 leading-none">AI Integration Offline</h4>
+            <h4 className="text-[11px] font-semibold text-orange-200 leading-none">AI Integration Offline</h4>
             <p className="text-[10px] text-slate-400 leading-relaxed">
               OmniRoute API keys or endpoints are missing. Paste your credentials to enable chat & note analysis.
             </p>
             <button
               onClick={onOpenSettings}
-              className="text-[10px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-0.5"
+              className="text-[10px] font-bold text-orange-400 hover:text-orange-300 flex items-center gap-0.5"
             >
               Configure Now →
             </button>
@@ -162,7 +162,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
       <div className="flex-1 overflow-y-auto p-4 space-y-4 select-text">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col justify-center text-center space-y-4 py-8 select-none">
-            <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center mx-auto text-indigo-400/80">
+            <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center mx-auto text-orange-400/80">
               <Sparkles className="w-5 h-5" />
             </div>
             <div className="space-y-1 max-w-xs mx-auto">
@@ -192,7 +192,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
                   onClick={() => runQuickAction('connect')}
                   className="w-full bg-slate-900/60 hover:bg-slate-900 border border-slate-850 text-[11px] text-slate-300 rounded-lg p-2 flex items-center gap-2 transition-all text-left"
                 >
-                  <Link2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <Link2 className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                   <div>
                     <div className="font-semibold text-slate-200">Suggest Connections</div>
                     <div className="text-[9px] text-slate-500">Find files to link via [[WikiLinks]]</div>
@@ -203,7 +203,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
                   onClick={() => runQuickAction('metadata')}
                   className="w-full bg-slate-900/60 hover:bg-slate-900 border border-slate-850 text-[11px] text-slate-300 rounded-lg p-2 flex items-center gap-2 transition-all text-left"
                 >
-                  <Hash className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <Hash className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                   <div>
                     <div className="font-semibold text-slate-200">Generate Frontmatter</div>
                     <div className="text-[9px] text-slate-500">Paste tags & YAML headers at top</div>
@@ -226,7 +226,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
 <div 
                    className={`text-xs p-3 rounded-2xl leading-relaxed ${
                      isUser 
-                       ? 'bg-indigo-600 text-white rounded-tr-none' 
+                       ? 'bg-orange-600 text-white rounded-tr-none' 
                        : 'bg-slate-900 border border-slate-850 text-slate-200 rounded-tl-none font-sans prose prose-invert prose-sm max-w-none'
                    }`}
                  >
@@ -243,7 +243,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
           <div className="flex flex-col items-start max-w-[85%] mr-auto">
             <span className="text-[9px] font-bold text-slate-500 mb-0.5">CEREBRO AI</span>
             <div className="bg-slate-900 border border-slate-850 p-3.5 rounded-2xl rounded-tl-none flex items-center gap-2.5">
-              <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+              <Loader2 className="w-4 h-4 text-orange-400 animate-spin" />
               <span className="text-xs text-slate-400">Consulting OmniRoute routing...</span>
             </div>
           </div>
@@ -278,13 +278,13 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
           placeholder={note ? "Chat with active note context..." : "Ask Cerebro AI anything..."}
           className="flex-1 bg-slate-900/60 border border-slate-850 focus:border-slate-700 text-xs rounded-xl px-3.5 py-2 text-slate-200 focus:outline-none transition-colors"
         />
-        <button
-          type="submit"
-          disabled={!inputValue.trim() || isLoading}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:pointer-events-none text-white px-3.5 rounded-xl transition-all flex items-center justify-center border border-indigo-500/20"
-        >
-          <Send className="w-3.5 h-3.5" />
-        </button>
+          <button
+            type="submit"
+            disabled={!inputValue.trim() || isLoading}
+            className="bg-orange-600 hover:bg-orange-500 disabled:opacity-30 disabled:pointer-events-none text-white px-3.5 rounded-xl transition-all flex items-center justify-center border border-orange-500/20"
+          >
+            <Send className="w-3.5 h-3.5" />
+          </button>
       </form>
     </div>
   );

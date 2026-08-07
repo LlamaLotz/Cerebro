@@ -92,13 +92,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
       })
       .attr('fill', (d: any) => {
         const isCurrent = activeNote && activeNote.title.toLowerCase() === d.title.toLowerCase();
-        if (isCurrent) return '#38bdf8'; // Sky-400 (active)
-        return d.exists ? '#6366f1' : '#475569'; // Indigo-500 or Slate-600 (uncreated)
+        if (isCurrent) return '#f97316'; // Orange-500 (active)
+        return d.exists ? '#fb923c' : '#475569'; // Orange-400 or Slate-600 (uncreated)
       })
       .attr('stroke', (d: any) => {
         const isCurrent = activeNote && activeNote.title.toLowerCase() === d.title.toLowerCase();
         if (isCurrent) return '#ffffff';
-        return d.exists ? '#4338ca' : '#1e293b';
+        return d.exists ? '#c2410c' : '#1e293b';
       })
       .attr('stroke-width', (d: any) => {
         const isCurrent = activeNote && activeNote.title.toLowerCase() === d.title.toLowerCase();
@@ -131,7 +131,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         .transition()
         .duration(150)
         .attr('r', Math.max(9, Math.min(22, d.linksCount * 1.5 + 9)))
-        .attr('fill', '#0ea5e9'); // bright cyan on hover
+        .attr('fill', '#ea580c'); // bright orange on hover
       
       d3.select(this).select('text')
         .transition()
@@ -146,7 +146,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         .transition()
         .duration(150)
         .attr('r', Math.max(6, Math.min(18, d.linksCount * 1.5 + 6)))
-        .attr('fill', isCurrent ? '#38bdf8' : (d.exists ? '#6366f1' : '#475569'));
+        .attr('fill', isCurrent ? '#f97316' : (d.exists ? '#fb923c' : '#475569'));
       
       d3.select(this).select('text')
         .transition()
@@ -198,7 +198,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       {/* Header bar */}
       <div className="px-6 py-3.5 border-b border-slate-900/60 bg-slate-950/20 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <Network className="w-4 h-4 text-sky-400" />
+          <Network className="w-4 h-4 text-orange-400" />
           <h2 className="text-sm font-semibold text-slate-100">Knowledge Network</h2>
         </div>
         <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1">
@@ -214,11 +214,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
         <div className="absolute bottom-4 left-4 bg-slate-900/90 border border-slate-800/80 px-3.5 py-2.5 rounded-xl shadow-lg text-[10px] space-y-1.5 backdrop-blur-sm">
           <span className="font-semibold text-slate-400 block mb-1">GRAPH LEGEND</span>
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-sky-400 border border-white" />
+            <div className="w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
             <span className="text-slate-200">Active Note</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-indigo-500 border border-indigo-700" />
+            <div className="w-2.5 h-2.5 rounded-full bg-orange-400 border border-orange-700" />
             <span className="text-slate-200">Existing Notes</span>
           </div>
           <div className="flex items-center gap-2">
