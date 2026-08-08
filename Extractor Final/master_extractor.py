@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import time
@@ -7,6 +8,8 @@ import shutil
 import urllib.request
 import concurrent.futures
 import argparse
+import logging
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
@@ -23,7 +26,6 @@ from pypdf import PdfReader, PdfWriter
 # Crawl4AI Import
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 
-
 # ==========================================
 # 1. SETUP BASE PATHS & ENGINE LOADERS
 # ==========================================
@@ -31,6 +33,58 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 SCRIPT_DIR = Path(__file__).parent.resolve()
 OUTPUT_DIR = SCRIPT_DIR / "cerebro_output"
 DOWNLOADS_DIR = SCRIPT_DIR / "downloads"
+LOGS_DIR = SCRIPT_DIR / "logs"
+
+
+class TeeStream:
+    """Duplicates stdout/stderr to a timestamped log file in the logs directory."""
+    def __init__(self, original_stream, log_file):
+        self.terminal = original_stream
+        self.log_file = log_file
+
+    def write(self, message):
+        self.terminal.write(message)
+        if message:
+            clean_msg = message.replace('\r', '')
+            if clean_msg:
+                try:
+                    with open(self.log_file, "a", encoding="utf-8") as f:
+                        f.write(clean_msg)
+                except Exception:
+                    pass
+
+    def flush(self):
+        self.terminal.flush()
+
+    def isatty(self):
+        return getattr(self.terminal, 'isatty', lambda: False)()
+
+
+def setup_logging():
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = LOGS_DIR / f"cerebro_{timestamp}.log"
+    
+    # Redirect stdout and stderr so ALL prints, logs, and errors are captured
+    sys.stdout = TeeStream(sys.__stdout__, log_file)
+    sys.stderr = TeeStream(sys.__stderr__, log_file)
+    
+    print(f"==================================================")
+    print(f"CEREBRO INGESTION PIPELINE LOG")
+    print(f"Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Log Destination: {log_file.resolve()}")
+    print(f"==================================================\n")
+    
+    # Configure the standard logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.__stdout__)  # Log directly to raw stdout to avoid Tee duplication
+        ]
+    )
+    return logging.getLogger("Cerebro")
 
 WHISPER_MODEL = None
 DOCLING_CONVERTER = None
@@ -646,6 +700,9 @@ def open_file_picker() -> list[str]:
 # ==========================================
 
 def run_cerebro():
+    global logger
+    logger = setup_logging()
+    
     # Parse Command Line Arguments first (For automation / Cerebro App button integration)
     parser = argparse.ArgumentParser(description="Cerebro Master Extractor Pipeline")
     parser.add_argument("--vault", type=str, help="Outputs clean final notes directly to this folder")
@@ -662,7 +719,7 @@ def run_cerebro():
     if args.vault:
         # Override clean notes destination directly to Cerebro note vault
         main_extractions_folder = Path(args.vault).resolve()
-        print(f"Note vault specified! Redirecting final clean notes to: {main_extractions_folder}")
+        logger.info(f"Note vault specified! Redirecting final clean notes to: {main_extractions_folder}")
 
     # Ensure directories are created
     main_extractions_folder.mkdir(parents=True, exist_ok=True)
@@ -678,38 +735,38 @@ def run_cerebro():
             sources.extend(args.files)
         if args.urls:
             sources.extend(args.urls)
-        print(f"Batch mode activated via CLI! Loaded {len(sources)} sources to extract.")
+        logger.info(f"Batch mode activated via CLI! Loaded {len(sources)} sources to extract.")
     else:
         # Standard Interactive Terminal Menu Mode
-        print("\n" + "="*50)
-        print("CEREBRO UNIFIED INGESTION SYSTEM")
-        print("="*50)
-        print("1. Select Local File(s) (Opens File Explorer)")
-        print("2. Process YouTube URL(s) / Web Link(s)")
+        logger.info("\n" + "="*50)
+        logger.info("CEREBRO UNIFIED INGESTION SYSTEM")
+        logger.info("="*50)
+        logger.info("1. Select Local File(s) (Opens File Explorer)")
+        logger.info("2. Process YouTube URL(s) / Web Link(s)")
 
         choice = input("\nSelect Option [1 or 2]: ").strip()
 
         if choice == "1":
-            print("\nOpening System File Explorer...")
+            logger.info("\nOpening System File Explorer...")
             sources = open_file_picker()
             if not sources:
-                print("WARNING: No file selected. Exiting.")
+                logger.warning("WARNING: No file selected. Exiting.")
                 return
         elif choice == "2":
             raw_urls = input("\nEnter YouTube URL(s) (comma-separated for multiple): ").strip()
             if raw_urls:
                 sources = [s.strip() for s in raw_urls.split(",") if s.strip()]
             else:
-                print("WARNING: No URL entered. Exiting.")
+                logger.warning("WARNING: No URL entered. Exiting.")
                 return
         else:
-            print("ERROR: Invalid selection. Exiting.")
+            logger.error("ERROR: Invalid selection. Exiting.")
             return
 
     total_batch_start = time.time()
     total_items = len(sources)
 
-    print(f"\nProcessing {total_items} item(s)...")
+    logger.info(f"\nProcessing {total_items} item(s)...")
 
     # Overall Batch Progress Bar
     with tqdm(total=total_items, desc="[Batch Progress]", unit="item") as batch_pbar:
@@ -720,9 +777,9 @@ def run_cerebro():
             item_raw_folder = raw_service_folder / f"item_{idx}_{int(time.time())}"
             item_raw_folder.mkdir(parents=True, exist_ok=True)
 
-            print(f"\n" + "-"*50)
-            print(f"Processing Item [{idx}/{total_items}]: {source}")
-            print("-" * 50)
+            logger.info(f"\n" + "-"*50)
+            logger.info(f"Processing Item [{idx}/{total_items}]: {source}")
+            logger.info("-" * 50)
 
             # Route Logic
             if source.startswith("http://") or source.startswith("https://"):
@@ -731,19 +788,19 @@ def run_cerebro():
                 process_local_file(source, item_raw_folder, main_extractions_folder)
 
             item_elapsed = time.time() - item_start_time
-            print(f"\nItem #{idx} Finished in {item_elapsed:.2f}s")
-            print(f"Main Clean Extraction: {main_extractions_folder.absolute()}")
-            print(f"Raw Service Files: {item_raw_folder.absolute()}")
+            logger.info(f"\nItem #{idx} Finished in {item_elapsed:.2f}s")
+            logger.info(f"Main Clean Extraction: {main_extractions_folder.absolute()}")
+            logger.info(f"Raw Service Files: {item_raw_folder.absolute()}")
 
             batch_pbar.update(1)
 
     total_elapsed = time.time() - total_batch_start
-    print("\n" + "="*50)
-    print(f"ALL {total_items} ITEM(S) COMPLETED SUCCESSFULLY!")
-    print(f"Total Execution Time: {total_elapsed:.2f}s")
-    print(f"Clean Notes Folder: {main_extractions_folder.absolute()}")
-    print(f"Raw Services Folder: {raw_service_folder.absolute()}")
-    print("="*50)
+    logger.info("\n" + "="*50)
+    logger.info(f"ALL {total_items} ITEM(S) COMPLETED SUCCESSFULLY!")
+    logger.info(f"Total Execution Time: {total_elapsed:.2f}s")
+    logger.info(f"Clean Notes Folder: {main_extractions_folder.absolute()}")
+    logger.info(f"Raw Services Folder: {raw_service_folder.absolute()}")
+    logger.info("="*50)
 
 
 if __name__ == "__main__":
