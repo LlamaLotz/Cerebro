@@ -119,17 +119,6 @@ def setup_logging():
         ]
     )
     
-    # Override built-in input() to automatically log what is entered by the user or the app
-    import builtins
-    original_input = builtins.input
-    
-    def logged_input(prompt=""):
-        val = original_input(prompt)
-        print(f"[INPUT RECEIVED]: {val}")
-        return val
-        
-    builtins.input = logged_input
-    
     return logging.getLogger("Cerebro")
 
 WHISPER_MODEL = None
@@ -801,26 +790,19 @@ def run_cerebro():
 
         choice = input("\nSelect Option [1 or 2]: ").strip()
 
-        if choice == "1" or choice.startswith("1"):
-            logger.info("\nOption 1 selected. Waiting 6 seconds before opening System File Explorer...")
-            time.sleep(6)
+        if choice == "1":
+            logger.info("\nOpening System File Explorer...")
             sources = open_file_picker()
             if not sources:
                 logger.warning("WARNING: No file selected. Exiting.")
                 return
-        elif choice == "2" or choice.startswith("2"):
-            logger.info("\nOption 2 selected. Waiting 6 seconds for Cerebro input stream...")
-            time.sleep(6)
+        elif choice == "2":
             raw_urls = input("\nEnter YouTube URL(s) (comma-separated for multiple): ").strip()
             if raw_urls:
                 sources = [s.strip() for s in raw_urls.split(",") if s.strip()]
             else:
                 logger.warning("WARNING: No URL entered. Exiting.")
                 return
-        elif choice.startswith("http://") or choice.startswith("https://") or os.path.exists(choice):
-            logger.info(f"\nDirect source input detected: {choice}. Waiting 6 seconds...")
-            time.sleep(6)
-            sources = [choice]
         else:
             logger.error(f"ERROR: Invalid selection '{choice}'. Exiting.")
             return
