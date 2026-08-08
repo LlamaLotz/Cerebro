@@ -84,6 +84,18 @@ def setup_logging():
             logging.StreamHandler(sys.__stdout__)  # Log directly to raw stdout to avoid Tee duplication
         ]
     )
+    
+    # Override built-in input() to automatically log what is entered by the user or the app
+    import builtins
+    original_input = builtins.input
+    
+    def logged_input(prompt=""):
+        val = original_input(prompt)
+        print(f"[INPUT RECEIVED]: {val}")
+        return val
+        
+    builtins.input = logged_input
+    
     return logging.getLogger("Cerebro")
 
 WHISPER_MODEL = None
