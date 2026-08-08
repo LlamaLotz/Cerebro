@@ -422,51 +422,65 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
         total_pages = len(reader.pages)
 
         if total_pages > 25:
-            print(f"Large PDF Detected ({total_pages} pages). Processing in 25-page chunks with process timeout safety...")
-            full_markdown = []
+            print(f"Large PDF Detected ({total_pages} pages). Processing in 25-page chunks in parallel with process timeout safety...")
             chunk_size = 25
-
+            DOWNLOADS_DIR.mkdir(exist_ok=True)
+            
+            # Create all temp chunk files first
+            chunk_files = []
+            for start in range(0, total_pages, chunk_size):
+                end = min(start + chunk_size, total_pages)
+                writer = PdfWriter()
+                for i in range(start, end):
+                    writer.add_page(reader.pages[i])
+                temp_chunk_path = DOWNLOADS_DIR / f"temp_chunk_{start}_{end}.pdf"
+                with open(temp_chunk_path, "wb") as f:
+                    writer.write(f)
+                chunk_files.append((start, end, temp_chunk_path))
+                
+            # Run parallel execution using a shared ProcessPoolExecutor outside the loop
+            results_dict = {}
+            max_workers = min(4, len(chunk_files)) # process chunks in parallel using up to 4 worker processes
+            
             with tqdm(total=total_pages, unit="page", desc="[Docling PDF Parsing]", leave=False) as pbar:
-                for start in range(0, total_pages, chunk_size):
-                    end = min(start + chunk_size, total_pages)
-
-                    writer = PdfWriter()
-                    for i in range(start, end):
-                        writer.add_page(reader.pages[i])
-
-                    temp_chunk_path = DOWNLOADS_DIR / f"temp_chunk_{start}_{end}.pdf"
-                    DOWNLOADS_DIR.mkdir(exist_ok=True)
+                with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all chunks to pool
+                    future_to_chunk = {
+                        executor.submit(_docling_worker, str(p)): (start, end, p)
+                        for start, end, p in chunk_files
+                    }
                     
-                    with open(temp_chunk_path, "wb") as f:
-                        writer.write(f)
-
-                    # Execute Docling inside an isolated process pool with a 60-second timeout
-                    chunk_md = None
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(_docling_worker, str(temp_chunk_path))
+                    # Gather results as they complete
+                    for future in concurrent.futures.as_completed(future_to_chunk):
+                        start, end, p = future_to_chunk[future]
+                        chunk_md = None
                         try:
-                            chunk_md = future.result(timeout=60)
+                            # 90 seconds timeout per chunk
+                            chunk_md = future.result(timeout=90)
                         except concurrent.futures.TimeoutError:
-                            print(f"\nWARNING: Chunk pages {start+1}-{end} timed out (Docling freeze). Falling back to raw text extraction...")
+                            print(f"\nWARNING: Chunk pages {start+1}-{end} timed out. Falling back to raw text extraction...")
                         except Exception as err:
                             print(f"\nWARNING: Chunk pages {start+1}-{end} failed layout conversion ({err}). Falling back to raw text extraction...")
-
-                    if chunk_md is None:
-                        fallback_text = []
-                        for i in range(start, end):
-                            page_text = reader.pages[i].extract_text() or ""
-                            fallback_text.append(f"### Page {i+1}\n\n{page_text}")
-                        chunk_md = "\n\n".join(fallback_text)
-
-                    full_markdown.append(chunk_md)
-
-                    if temp_chunk_path.exists():
-                        temp_chunk_path.unlink()
-                    gc.collect()
-
-                    pbar.update(end - start)
-
+                        
+                        # Fallback if docling failed or timed out
+                        if chunk_md is None:
+                            fallback_text = []
+                            for i in range(start, end):
+                                page_text = reader.pages[i].extract_text() or ""
+                                fallback_text.append(f"### Page {i+1}\n\n{page_text}")
+                            chunk_md = "\n\n".join(fallback_text)
+                            
+                        results_dict[start] = chunk_md
+                        pbar.update(end - start)
+                        
+                        # Cleanup temp file
+                        if p.exists():
+                            p.unlink()
+            
+            # Sort by start page to maintain order
+            full_markdown = [results_dict[start] for start in sorted(results_dict.keys())]
             content = "\n\n---\n\n".join(full_markdown)
+            gc.collect()
         else:
             with tqdm(total=total_pages, unit="page", desc="[Docling PDF Parsing]", leave=False) as pbar:
                 docling = get_docling()
