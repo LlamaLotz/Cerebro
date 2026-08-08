@@ -301,7 +301,8 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": True,
-        "subtitleslangs": ["en.*", "en"], # Use wildcard to capture all English variants (en-US, en-GB, etc.)
+        # Explicitly include common English variants
+        "subtitleslangs": ["en.*", "en", "en-US", "en-GB", "en-orig", "en-ca"], 
         "quiet": True,
     }
     
@@ -324,8 +325,10 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
                     if available_keys:
                         print(f"DEBUG: Available captions: {available_keys}")
 
-                    # Priority: Manual English -> Auto English -> Any Manual -> Any Auto
+                    # Priority: Manual English variants -> Auto English variants -> Any Manual -> Any Auto
+                    # Explicitly check for en-orig as a high-priority variant
                     target_sub_key = (
+                        next((k for k in manual_subs if k == "en-orig"), None) or
                         next((k for k in manual_subs if k.startswith("en")), None) or
                         next((k for k in auto_subs if k.startswith("en")), None) or
                         (next(iter(manual_subs.keys()), None) if manual_subs else None) or
