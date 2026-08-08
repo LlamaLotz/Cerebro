@@ -1,6 +1,7 @@
 import subprocess
 import time
 import sys
+import os
 
 def run_orchestrator(option, source):
     # Path to the master extractor script
@@ -18,16 +19,16 @@ def run_orchestrator(option, source):
 
     try:
         # 1. Send the initial option (1 or 2)
-        print(f"[Orchestrator] Sending option: {option}")
+        print(f"[Orchestrator] Detected option {option} for source: {source}")
         process.stdin.write(f"{option}\n")
         process.stdin.flush()
 
         # 2. Wait 6 seconds
-        print("[Orchestrator] Waiting 6 seconds...")
+        print("[Orchestrator] Waiting 6 seconds for script readiness...")
         time.sleep(6)
 
         # 3. Send the source (URL or file path)
-        print(f"[Orchestrator] Sending source: {source}")
+        print(f"[Orchestrator] Sending source...")
         process.stdin.write(f"{source}\n")
         process.stdin.flush()
 
@@ -39,12 +40,18 @@ def run_orchestrator(option, source):
         process.stdin.close()
 
 if __name__ == "__main__":
-    # Example usage: Orchestrate option '2' (URLs) and provide a URL
-    # You would adapt this to be called by Cerebro with appropriate arguments
-    # or modify this script to take arguments from the command line.
-    
-    # Example: python orchestrator.py 2 https://youtube.com/...
-    if len(sys.argv) >= 3:
-        run_orchestrator(sys.argv[1], sys.argv[2])
+    if len(sys.argv) >= 2:
+        source = sys.argv[1]
+        
+        # Auto-detect option
+        if source.startswith(('http://', 'https://')):
+            option = "2"
+        elif os.path.exists(source):
+            option = "1"
+        else:
+            print(f"[Orchestrator] ERROR: Source not found or invalid URL: {source}")
+            sys.exit(1)
+            
+        run_orchestrator(option, source)
     else:
-        print("Usage: python orchestrator.py <option> <source>")
+        print("Usage: python orchestrator.py <source_url_or_path>")
