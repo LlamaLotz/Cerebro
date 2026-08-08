@@ -1,5 +1,4 @@
 import os
-import sys
 import re
 import json
 import time
@@ -9,7 +8,6 @@ import urllib.request
 import concurrent.futures
 import argparse
 from pathlib import Path
-from difflib import SequenceMatcher
 import tkinter as tk
 from tkinter import filedialog
 
@@ -299,7 +297,6 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
     # "whisper": whisper (primary), native (fallback)
     
     # Step A: Fetch Native Captions via yt-dlp
-    t_start_sub = time.time()
     ydl_opts_subs = {
         "skip_download": True,
         "writesubtitles": True,
@@ -376,7 +373,6 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
             print(f"WARNING: Native caption stream skipped: {e}")
 
     # Step B: Download Audio Track and transcribe with Whisper
-    t_start_audio = time.time()
     audio_file = DOWNLOADS_DIR / f"temp_{int(time.time())}.mp3"
     
     should_try_whisper = (preferred_method == "auto" or preferred_method == "whisper" or (preferred_method == "captions" and not native_text))
