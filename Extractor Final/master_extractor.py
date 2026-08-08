@@ -105,6 +105,13 @@ def safe_write_file(file_path: Path, content: str, encoding: str = "utf-8"):
         except Exception as e2:
             print(f"FAILED direct write fallback: {e2}")
 
+def sanitize_filename(name: str) -> str:
+    """Removes invalid OS filename characters from string."""
+    name = re.sub(r'[\\/*?:"<>|]', ' ', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
+
+
 def clean_vtt_text(vtt_text: str) -> str:
     """Cleans VTT/SRT/TTML caption files by removing timestamps, tags, and metadata."""
     if not vtt_text:
