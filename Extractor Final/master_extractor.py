@@ -397,6 +397,15 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
     if "youtube.com" not in video_url.lower() and "youtu.be" not in video_url.lower():
         return process_web_url(video_url, item_raw_folder, main_extractions_folder)
 
+    # Normalize preference method aliases
+    preferred_method = preferred_method.lower().strip()
+    if preferred_method in ["yt-dlp", "yt_dlp", "native", "captions", "caption"]:
+        preferred_method = "captions"
+    elif preferred_method in ["whisper", "asr", "whisper_asr"]:
+        preferred_method = "whisper"
+    elif preferred_method not in ["auto", "captions", "whisper"]:
+        preferred_method = "auto"
+
     DOWNLOADS_DIR.mkdir(exist_ok=True)
     native_text = ""
     whisper_text = ""
