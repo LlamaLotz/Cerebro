@@ -1,5 +1,39 @@
 import os
 import sys
+import subprocess
+
+# Self-Healing Environment: Check and auto-install core dependencies before importing them
+def auto_heal_environment():
+    required = {
+        "yt_dlp": "yt-dlp",
+        "tqdm": "tqdm",
+        "pypdf": "pypdf",
+        "crawl4ai": "crawl4ai",
+    }
+    missing = []
+    for module_name, package_name in required.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append(package_name)
+            
+    if missing:
+        print(f"\n[Cerebro Self-Healing] Missing core packages detected: {missing}")
+        print(f"Installing missing packages for current Python interpreter ({sys.executable})...")
+        try:
+            # Upgrade pip first to avoid installation issues
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Install missing packages
+            subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
+            print("[Cerebro Self-Healing] Successfully installed missing packages! Restarting script...\n")
+            # Restart the script so it continues with newly installed packages
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            print(f"[Cerebro Self-Healing ERROR] Failed to auto-install: {e}")
+            print("Please install these packages manually or run as administrator.\n")
+
+auto_heal_environment()
+
 import re
 import json
 import time
