@@ -4,6 +4,7 @@ import re
 import json
 import time
 import gc
+import shutil
 import urllib.request
 import concurrent.futures
 import argparse
@@ -81,15 +82,58 @@ def _docling_worker(pdf_path: str) -> str:
     return res.document.export_to_markdown()
 
 
-# ==========================================
-# 2. FILE UTILITIES & SANITIZERS
-# ==========================================
+def safe_write_file(file_path: Path, content: str, encoding: str = "utf-8"):
+    """Writes content to a local temp file first, then moves it to the final destination to avoid network share permission issues."""
+    try:
+        temp_dir = Path(os.environ.get("TEMP", "/tmp"))
+        temp_file = temp_dir / f"cerebro_{int(time.time())}_{file_path.name}"
+        
+        with open(temp_file, "w", encoding=encoding) as f:
+            f.write(content)
+        
+        # Ensure target directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Move temp file to final destination (overwrite if exists)
+        shutil.move(str(temp_file), str(file_path))
+    except Exception as e:
+        print(f"CRITICAL ERROR writing file {file_path}: {e}")
+        # Final attempt: try direct write if move fails
+        try:
+            with open(file_path, "w", encoding=encoding) as f:
+                f.write(content)
+        except Exception as e2:
+            print(f"FAILED direct write fallback: {e2}")
 
-def sanitize_filename(name: str) -> str:
-    """Removes invalid OS filename characters from string."""
-    name = re.sub(r'[\\/*?:"<>|]', ' ', name)
-    name = re.sub(r'\s+', ' ', name).strip()
-    return name
+def clean_vtt_text(vtt_text: str) -> str:
+    """Cleans VTT/SRT/TTML caption files by removing timestamps, tags, and metadata."""
+    if not vtt_text:
+        return ""
+    # Strip HTML/XML tags
+    text = re.sub(r'<[^>]+>', ' ', vtt_text)
+    # Strip WebVTT headers / metadata
+    text = re.sub(r'WEBVTT.*?\n', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'Kind:.*?\n', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'Language:.*?\n', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'STYLE[\s\S]*?\n\n', '\n\n', text, flags=re.IGNORECASE)
+    # Remove timestamps (e.g., 00:00:00.000 --> 00:00:00.000 or 00:00.000 --> 00:00.000)
+    text = re.sub(r'\d{1,2}:?\d{2}:\d{2}[\.,]\d{3}\s*-->\s*\d{1,2}:?\d{2}:\d{2}[\.,]\d{3}.*', '', text)
+    text = re.sub(r'\d{2}:\d{2}[\.,]\d{3}\s*-->\s*\d{2}:\d{2}[\.,]\d{3}.*', '', text)
+    # Strip positioning attributes (e.g., align:start position:0%)
+    text = re.sub(r'align:\S+|position:\S+|line:\S+|size:\S+', '', text)
+    # Remove duplicate adjacent lines (common in VTT rolling captions)
+    lines = text.splitlines()
+    clean_lines = []
+    last_line = ""
+    for line in lines:
+        line = line.strip()
+        if not line or line.isdigit():
+            continue
+        if line != last_line:
+            clean_lines.append(line)
+            last_line = line
+    
+    return " ".join(clean_lines).strip()
 
 
 # ==========================================
@@ -172,13 +216,11 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
 
         # Save raw to item folder
         raw_out_file = item_raw_folder / "crawl4ai_raw.md"
-        with open(raw_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Raw Web Crawl: {url}\n\n{content}")
+        safe_write_file(raw_out_file, f"# Raw Web Crawl: {url}\n\n{content}")
 
         sanitized_title = sanitize_filename(title)
         master_out_file = main_extractions_folder / f"{sanitized_title}.md"
-        with open(master_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n**Source URL:** {url}\n\n---\n\n{content}")
+        safe_write_file(master_out_file, f"# {title}\n\n**Source URL:** {url}\n\n---\n\n{content}")
             
         print(f"Successfully crawled and saved: {title}")
 
@@ -194,8 +236,7 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
                 content = " ".join(text.split())
                 
                 master_out_file = main_extractions_folder / f"fallback_{int(time.time())}.md"
-                with open(master_out_file, "w", encoding="utf-8") as f:
-                    f.write(f"# Fallback Web Extract\n\n**Source:** {url}\n\n---\n\n{content}")
+                safe_write_file(master_out_file, f"# Fallback Web Extract\n\n**Source:** {url}\n\n---\n\n{content}")
         except Exception as e2:
             print(f"CRITICAL: Fallback also failed: {e2}")
 
@@ -203,23 +244,35 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
 def transcribe_audio_whisper(audio_path: str) -> str:
     """Transcribes audio using Faster-Whisper with real-time ETA progress bar."""
     whisper = get_whisper()
-    segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=True)
-    
-    total_duration = round(info.duration, 2)
-    transcript_text = []
-    last_timestamp = 0.0
+    try:
+        segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=True)
+        
+        total_duration = round(info.duration, 2)
+        transcript_text = []
+        last_timestamp = 0.0
 
-    print(f"Audio Duration: {total_duration}s | Language: {info.language.upper()}")
-    with tqdm(total=total_duration, unit="s", desc="[Audio Speech-to-Text]", leave=False) as pbar:
-        for segment in segments:
-            transcript_text.append(segment.text.strip())
-            segment_length = segment.end - last_timestamp
-            pbar.update(segment_length)
-            last_timestamp = segment.end
-        if last_timestamp < total_duration:
-            pbar.update(total_duration - last_timestamp)
+        print(f"Audio Duration: {total_duration}s | Language: {info.language.upper()}")
+        with tqdm(total=total_duration, unit="s", desc="[Audio Speech-to-Text]", leave=False) as pbar:
+            for segment in segments:
+                transcript_text.append(segment.text.strip())
+                segment_length = segment.end - last_timestamp
+                pbar.update(segment_length)
+                last_timestamp = segment.end
+            if last_timestamp < total_duration:
+                pbar.update(total_duration - last_timestamp)
+        
+        result_text = " ".join(transcript_text).strip()
+        
+        if not result_text:
+            print("WARNING: vad_filter=True returned no text. Retrying without VAD...")
+            segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=False)
+            transcript_text = [segment.text.strip() for segment in segments]
+            result_text = " ".join(transcript_text).strip()
 
-    return " ".join(transcript_text)
+        return result_text
+    except Exception as e:
+        print(f"ERROR: Whisper transcription failed: {e}")
+        return ""
 
 
 def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_folder: Path, preferred_method: str = "auto"):
@@ -258,25 +311,59 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
                     video_title = info.get("title", "YouTube Video")
                     
                     # Combine manual subtitles and auto-generated ones
-                    all_subs = {**(info.get("automatic_captions") or {}), **(info.get("subtitles") or {})}
+                    manual_subs = info.get("subtitles") or {}
+                    auto_subs = info.get("automatic_captions") or {}
+                    all_subs = {**auto_subs, **manual_subs}
                     
-                    # Priority 1: Manual English, Priority 2: Auto English
-                    # Search for any key that starts with 'en'
-                    target_sub_key = next((k for k in all_subs if k.startswith("en")), None)
+                    # Log available captions for debugging
+                    available_keys = list(all_subs.keys())
+                    if available_keys:
+                        print(f"DEBUG: Available captions: {available_keys}")
+
+                    # Priority: Manual English -> Auto English -> Any Manual -> Any Auto
+                    target_sub_key = (
+                        next((k for k in manual_subs if k.startswith("en")), None) or
+                        next((k for k in auto_subs if k.startswith("en")), None) or
+                        (next(iter(manual_subs.keys()), None) if manual_subs else None) or
+                        (next(iter(auto_subs.keys()), None) if auto_subs else None)
+                    )
                     target_sub = all_subs.get(target_sub_key) if target_sub_key else None
                     
                     if target_sub:
-                        # Try to find the json3 format for cleaner parsing
+                        # Priority 1: json3 format for cleaner parsing
                         json3_url = next((fmt.get("url") for fmt in target_sub if fmt.get("ext") == "json3"), None)
                         if json3_url:
-                            req = urllib.request.urlopen(json3_url)
-                            data = json.loads(req.read().decode("utf-8"))
-                            parts = [
-                                seg.get("utf8", "")
-                                for event in data.get("events", []) if "segs" in event
-                                for seg in event["segs"]
-                            ]
-                            native_text = " ".join(parts).strip()
+                            try:
+                                req = urllib.request.urlopen(json3_url)
+                                data = json.loads(req.read().decode("utf-8"))
+                                parts = [
+                                    seg.get("utf8", "")
+                                    for event in data.get("events", []) if "segs" in event
+                                    for seg in event["segs"]
+                                ]
+                                native_text = " ".join(parts).strip()
+                            except Exception as json_err:
+                                print(f"DEBUG: Failed parsing json3 captions: {json_err}")
+                                native_text = ""
+
+                        # Fallback: try vtt/srv1/ttml/srt or any available format if json3 missing or empty
+                        if not native_text:
+                            for fmt in target_sub:
+                                fmt_url = fmt.get("url")
+                                fmt_ext = fmt.get("ext", "unknown")
+                                if not fmt_url:
+                                    continue
+                                try:
+                                    print(f"DEBUG: Attempting caption fallback format ({fmt_ext})...")
+                                    req = urllib.request.urlopen(fmt_url)
+                                    raw_sub_data = req.read().decode("utf-8", errors="ignore")
+                                    cleaned = clean_vtt_text(raw_sub_data)
+                                    if cleaned:
+                                        native_text = cleaned
+                                        break
+                                except Exception as fmt_err:
+                                    print(f"DEBUG: Failed downloading format {fmt_ext}: {fmt_err}")
+
                 pbar.update(1)
         except Exception as e:
             print(f"WARNING: Native caption stream skipped: {e}")
@@ -351,34 +438,30 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
     is_whisper_selected = "[SELECTED]" if winner_name == "Whisper ASR" else "[NOT SELECTED]"
     
     native_out_file = item_raw_folder / f"yt_dlp_native_{is_native_selected.lower().strip('[]')}.md"
-    with open(native_out_file, "w", encoding="utf-8") as f:
-        f.write(f"# {video_title} (yt-dlp Native Captions) {is_native_selected}\n\n{native_text or 'No native captions available.'}")
+    safe_write_file(native_out_file, f"# {video_title} (yt-dlp Native Captions) {is_native_selected}\n\n{native_text or 'No native captions available.'}")
     
     whisper_out_file = item_raw_folder / f"whisper_asr_{is_whisper_selected.lower().strip('[]')}.md"
-    with open(whisper_out_file, "w", encoding="utf-8") as f:
-        f.write(f"# {video_title} (Faster-Whisper ASR) {is_whisper_selected}\n\n{whisper_text or 'No Whisper transcript available.'}")
+    safe_write_file(whisper_out_file, f"# {video_title} (Faster-Whisper ASR) {is_whisper_selected}\n\n{whisper_text or 'No Whisper transcript available.'}")
     
     meta_file = item_raw_folder / "extraction_meta.json"
-    with open(meta_file, "w", encoding="utf-8") as f:
-        json.dump({
-            "title": video_title,
-            "url": video_url,
-            "selected_service": winner_name,
-            "reason": reason,
-            "timestamp": time.time()
-        }, f, indent=2)
+    safe_write_file(meta_file, json.dumps({
+        "title": video_title,
+        "url": video_url,
+        "selected_service": winner_name,
+        "reason": reason,
+        "timestamp": time.time()
+    }, indent=2), encoding="utf-8")
 
     sanitized_title = sanitize_filename(video_title)
     master_out_file = main_extractions_folder / f"{sanitized_title}.md"
-    with open(master_out_file, "w", encoding="utf-8") as f:
-        f.write(
-            f"# {video_title}\n\n"
-            f"**Source URL:** {video_url}\n\n"
-            f"--- \n\n"
-            f"**Selected Service:** `{winner_name}`\n"
-            f"**Selection Reason:** {reason}\n\n"
-            f"{winner_text or 'No content extracted.'}"
-        )
+    safe_write_file(master_out_file, 
+        f"# {video_title}\n\n"
+        f"**Source URL:** {video_url}\n\n"
+        f"--- \n\n"
+        f"**Selected Service:** `{winner_name}`\n"
+        f"**Selection Reason:** {reason}\n\n"
+        f"{winner_text or 'No content extracted.'}"
+    )
 
 
 def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_folder: Path):
@@ -401,29 +484,27 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
         
         # Save raw to item-specific folder
         raw_out_file = item_raw_folder / "whisper_asr_raw.md"
-        with open(raw_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Raw Whisper ASR: {path.name}\n\n{content}")
+        safe_write_file(raw_out_file, f"# Raw Whisper ASR: {path.name}\n\n{content}")
             
         # Save clean winning note
         sanitized_name = sanitize_filename(path.stem)
         master_out_file = main_extractions_folder / f"{sanitized_name}.md"
-        with open(master_out_file, "w", encoding="utf-8") as f:
-            f.write(
-                f"# Transcript: {path.name}\n\n"
-                f"**Source File:** `{path.name}`\n"
-                f"**Engine:** `Faster-Whisper ASR`\n\n"
-                f"---\n\n"
-                f"{content}"
-            )
+        safe_write_file(master_out_file, 
+            f"# Transcript: {path.name}\n\n"
+            f"**Source File:** `{path.name}`\n"
+            f"**Engine:** `Faster-Whisper ASR`\n\n"
+            f"---\n\n"
+            f"{content}"
+        )
             
     elif path.suffix.lower() == ".pdf":
         # Safe Handling for Large PDFs
         reader = PdfReader(str(path))
         total_pages = len(reader.pages)
 
-        if total_pages > 25:
-            print(f"Large PDF Detected ({total_pages} pages). Processing in 25-page chunks in parallel with process timeout safety...")
-            chunk_size = 25
+        if total_pages > 100:
+            print(f"Large PDF Detected ({total_pages} pages). Processing in 50-page chunks in parallel with process timeout safety...")
+            chunk_size = 50
             DOWNLOADS_DIR.mkdir(exist_ok=True)
             
             # Create all temp chunk files first
@@ -487,17 +568,15 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
                 result = docling.convert(str(path))
                 content = result.document.export_to_markdown()
                 pbar.update(total_pages)
-                
         # Save raw to raw_service_files folder
         raw_out_file = item_raw_folder / "docling_raw.md"
-        with open(raw_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Raw Docling Extraction: {path.name}\n\n{content}")
-            
+        safe_write_file(raw_out_file, f"# Raw Docling Extraction: {path.name}\n\n{content}")
+        
         # Save clean note to main extractions directory
         sanitized_name = sanitize_filename(path.stem)
         master_out_file = main_extractions_folder / f"{sanitized_name}.md"
-        with open(master_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Note: {path.stem}\n\n**Source File:** `{path.name}`\n\n{content}")
+        safe_write_file(master_out_file, f"# Note: {path.stem}\n\n**Source File:** `{path.name}`\n\n{content}")
+
             
     else:
         # standard office files layout extraction via Docling
@@ -509,14 +588,13 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
             
         # Save raw to raw_service_files folder
         raw_out_file = item_raw_folder / "docling_raw.md"
-        with open(raw_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Raw Docling Extraction: {path.name}\n\n{content}")
-            
+        safe_write_file(raw_out_file, f"# Raw Docling Extraction: {path.name}\n\n{content}")
+        
         # Save clean note to main extractions directory
         sanitized_name = sanitize_filename(path.stem)
         master_out_file = main_extractions_folder / f"{sanitized_name}.md"
-        with open(master_out_file, "w", encoding="utf-8") as f:
-            f.write(f"# Note: {path.stem}\n\n**Source File:** `{path.name}`\n\n{content}")
+        safe_write_file(master_out_file, f"# Note: {path.stem}\n\n**Source File:** `{path.name}`\n\n{content}")
+
 
 
 def open_file_picker() -> list[str]:
