@@ -10,23 +10,15 @@ import argparse
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
+import yt_dlp
 
 # Suppress non-critical warnings
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import torch
-import yt_dlp
 from tqdm import tqdm
 from pypdf import PdfReader, PdfWriter
-from faster_whisper import WhisperModel
-
-# Docling Imports
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.datamodel.base_models import InputFormat
-from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 
 # Crawl4AI Import
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
@@ -47,6 +39,13 @@ def get_whisper():
     """Lazy loader for Faster-Whisper."""
     global WHISPER_MODEL
     if WHISPER_MODEL is None:
+        try:
+            import torch
+            from faster_whisper import WhisperModel
+        except ImportError:
+            print("ERROR: 'torch' or 'faster-whisper' not installed. Audio transcription is disabled.")
+            return None
+            
         print("Initializing Faster-Whisper local model...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         compute_type = "float16" if torch.cuda.is_available() else "int8"
@@ -57,6 +56,15 @@ def get_docling():
     """Lazy loader for Optimized Docling Engine."""
     global DOCLING_CONVERTER
     if DOCLING_CONVERTER is None:
+        try:
+            from docling.document_converter import DocumentConverter, PdfFormatOption
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.datamodel.base_models import InputFormat
+            from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+        except ImportError:
+            print("ERROR: 'docling' not installed. PDF/Office document conversion is disabled.")
+            return None
+
         pipeline_options = PdfPipelineOptions()
         pipeline_options.generate_picture_images = False
         pipeline_options.generate_table_images = False
@@ -249,6 +257,9 @@ def process_web_url(url: str, item_raw_folder: Path, main_extractions_folder: Pa
 def transcribe_audio_whisper(audio_path: str) -> str:
     """Transcribes audio using Faster-Whisper with real-time ETA progress bar."""
     whisper = get_whisper()
+    if not whisper:
+        return "Audio transcription failed: Required libraries (torch/faster-whisper) not installed."
+        
     try:
         segments, info = whisper.transcribe(audio_path, beam_size=1, vad_filter=True)
         
@@ -571,8 +582,11 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
         else:
             with tqdm(total=total_pages, unit="page", desc="[Docling PDF Parsing]", leave=False) as pbar:
                 docling = get_docling()
-                result = docling.convert(str(path))
-                content = result.document.export_to_markdown()
+                if not docling:
+                    content = "PDF conversion failed: 'docling' not installed."
+                else:
+                    result = docling.convert(str(path))
+                    content = result.document.export_to_markdown()
                 pbar.update(total_pages)
         # Save raw to raw_service_files folder
         raw_out_file = item_raw_folder / "docling_raw.md"
@@ -588,8 +602,11 @@ def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_f
         # standard office files layout extraction via Docling
         with tqdm(total=1, desc=f"[Docling Parsing {path.suffix.upper()}]", leave=False) as pbar:
             docling = get_docling()
-            result = docling.convert(str(path))
-            content = result.document.export_to_markdown()
+            if not docling:
+                content = "Office conversion failed: 'docling' not installed."
+            else:
+                result = docling.convert(str(path))
+                content = result.document.export_to_markdown()
             pbar.update(1)
             
         # Save raw to raw_service_files folder
