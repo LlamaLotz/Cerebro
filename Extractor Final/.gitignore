@@ -1,0 +1,20 @@
+# Local temporary download folder (audio/video cache)
+downloads/
+*.mp3
+*.wav
+*.mp4
+*.m4a
+
+# Extracted Markdown output folders
+cerebro_output/
+
+# Python cache & Environment files
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# System / OS hidden files
+.DS_Store
+Thumbs.db
