@@ -5,6 +5,31 @@ use std::process::{Command, Stdio};
 use walkdir::WalkDir;
 use tauri::{Manager, Window, Emitter};
 
+mod db;
+pub mod linker;
+
+use linker::LinkerEngine;
+use std::sync::Mutex;
+
+pub struct AppState {
+    pub linker: Mutex<Option<LinkerEngine>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct Delta {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl From<linker::differ::Delta> for Delta {
+    fn from(d: linker::differ::Delta) -> Self {
+        Delta {
+            added: d.added,
+            removed: d.removed,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteFile {
@@ -17,7 +42,50 @@ pub struct NoteFile {
 }
 
 #[tauri::command]
-fn setup_omniroute_environment(app: tauri::AppHandle) -> Result<String, String> {
+fn init_linker(
+    state: tauri::State<'_, AppState>,
+    db_path: String,
+    patterns: Vec<String>
+) -> Result<(), String> {
+    let engine = LinkerEngine::new(&db_path, patterns);
+    let mut linker = state.linker.lock().unwrap();
+    *linker = Some(engine);
+    Ok(())
+}
+
+#[tauri::command]
+fn linker_scan(
+    state: tauri::State<'_, AppState>,
+    file_path: String
+) -> Result<Vec<String>, String> {
+    let linker = state.linker.lock().unwrap();
+    let engine = linker.as_ref().ok_or("Linker engine not initialized")?;
+    engine.scan_file(&file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn linker_diff(
+    state: tauri::State<'_, AppState>,
+    file_path: String
+) -> Result<Option<Delta>, String> {
+    let linker = state.linker.lock().unwrap();
+    let engine = linker.as_ref().ok_or("Linker engine not initialized")?;
+    let diff = engine.diff_file(&file_path).map_err(|e| e.to_string())?;
+    Ok(diff.map(Delta::from))
+}
+
+#[tauri::command]
+fn linker_apply(
+    state: tauri::State<'_, AppState>,
+    file_path: String
+) -> Result<bool, String> {
+    let mut linker = state.linker.lock().unwrap();
+    let engine = linker.as_mut().ok_or("Linker engine not initialized")?;
+    engine.apply_file(&file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn setup_omniroute_environment(_app: tauri::AppHandle) -> Result<String, String> {
     println!("Initializing OmniRoute environment check...");
     
     let mut output = String::new();
@@ -405,6 +473,9 @@ fn run_extractor_installer(app: tauri::AppHandle) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            app.manage(AppState {
+                linker: Mutex::new(None),
+            });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -415,6 +486,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            init_linker,
+            linker_scan,
+            linker_diff,
+            linker_apply,
             select_file,
             select_folder,
             read_vault_files,
