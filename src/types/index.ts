@@ -130,6 +130,13 @@ export const tauriAPI = {
       return { success: false, output: err.toString() };
     }
   },
+  appendIngestionLog: async (level: string, message: string): Promise<void> => {
+    try {
+      await invoke('append_ingestion_log', { level, message });
+    } catch (err) {
+      console.error('Failed to append ingestion log file entry:', err);
+    }
+  },
   onVaultChanged: (callback: (data: { eventType: string; filename: string }) => void) => {
     // Return unsubscribe no-op since UI action saves trigger list refresh directly
     return () => {};

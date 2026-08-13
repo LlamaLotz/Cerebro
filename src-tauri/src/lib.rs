@@ -6,13 +6,23 @@ use walkdir::WalkDir;
 use tauri::{Manager, Window, Emitter};
 
 mod db;
+mod engine;
 pub mod linker;
+mod watcher;
 
-use linker::LinkerEngine;
-use std::sync::Mutex;
+use linker::{LinkerEngine, NoteLinker, LinkMention};
+use std::sync::{Arc, Mutex};
+
+use crate::engine::embeddings::EmbeddingEngine;
 
 pub struct AppState {
     pub linker: Mutex<Option<LinkerEngine>>,
+    pub db_path: Mutex<Option<String>>,
+    pub watcher_path: Mutex<Option<String>>,
+    /// Cached embedding-engine initialization result. Both success and failure
+    /// are memoized so a broken model isn't re-initialized (and doesn't
+    /// re-attempt network downloads) on every scan.
+    pub embeddings: Mutex<Option<Result<Arc<EmbeddingEngine>, String>>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -42,15 +52,227 @@ pub struct NoteFile {
 }
 
 #[tauri::command]
+fn scan_unlinked_mentions(
+    app_handle: tauri::AppHandle,
+    content: String,
+    current_note_id: String,
+    dictionary: Vec<(String, String)>,
+) -> Vec<LinkMention> {
+    let linker = NoteLinker::new(dictionary);
+    let mentions = linker.find_mentions(&content, Some(&current_note_id));
+
+    // Keep the backlink graph in sync with each scan
+    if let Ok(conn) = db::init_db(&app_handle) {
+        let _ = db::update_backlinks(&conn, &current_note_id, &mentions);
+    }
+
+    mentions
+}
+
+#[tauri::command]
 fn init_linker(
     state: tauri::State<'_, AppState>,
-    db_path: String,
+    app_handle: tauri::AppHandle,
     patterns: Vec<String>
 ) -> Result<(), String> {
-    let engine = LinkerEngine::new(&db_path, patterns);
+    // Ensure the canonical app-data database exists, then point the engine at it
+    let conn = db::init_db(&app_handle)?;
+    drop(conn);
+
+    let path = db::db_path(&app_handle)?;
+    let path_str = path.to_string_lossy().to_string();
+
+    let engine = LinkerEngine::new(&path_str, patterns)?;
     let mut linker = state.linker.lock().unwrap();
     *linker = Some(engine);
+    let mut path_guard = state.db_path.lock().unwrap();
+    *path_guard = Some(path_str);
     Ok(())
+}
+
+#[tauri::command]
+fn get_vault_dictionary(app_handle: tauri::AppHandle) -> Result<Vec<(String, String)>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::get_vault_dictionary(&conn)
+}
+
+/// Model repo + files required by `fastembed` for `all-MiniLM-L6-v2`.
+const EMBEDDING_REPO_DIR: &str = "models--Qdrant--all-MiniLM-L6-v2-onnx";
+const EMBEDDING_REQUIRED_FILES: [&str; 5] = [
+    "config.json",
+    "model.onnx",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+];
+
+/// Verifies the local fastembed cache holds the full set of model files.
+/// A cache dir without `refs/main` (never downloaded) passes so fastembed can
+/// attempt the one-time download; a *started* download that left the snapshot
+/// incomplete fails fast with a clear message instead of re-attempting a
+/// broken fetch on every scan.
+fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
+    let repo_dir = cache_dir.join(EMBEDDING_REPO_DIR);
+    if !repo_dir.exists() {
+        return Ok(());
+    }
+
+    let refs_file = repo_dir.join("refs").join("main");
+    let commit_hash = match std::fs::read_to_string(&refs_file) {
+        Ok(h) => h.trim().to_string(),
+        Err(_) => return Ok(()),
+    };
+    let snapshot_dir = repo_dir.join("snapshots").join(&commit_hash);
+
+    let missing: Vec<&str> = EMBEDDING_REQUIRED_FILES
+        .iter()
+        .copied()
+        .filter(|f| !snapshot_dir.join(f).exists())
+        .collect();
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Embedding model cache is incomplete (missing {} in {}). \
+             Close the app, then run `cargo run --example check_model` from src-tauri \
+             to repair the cache.",
+            missing.join(", "),
+            snapshot_dir.display()
+        ))
+    }
+}
+
+/// Lazily initializes the semantic embedding engine (model load + HNSW rebuild).
+fn get_embedding_engine(
+    state: &tauri::State<'_, AppState>,
+    app_handle: &tauri::AppHandle,
+) -> Result<Arc<EmbeddingEngine>, String> {
+    let mut guard = state.embeddings.lock().unwrap();
+    if let Some(result) = guard.as_ref() {
+        return result.clone();
+    }
+
+    let conn = db::init_db(app_handle)?;
+    let home = app_handle.path().home_dir().map_err(|e| e.to_string())?;
+    let cache_dir = home.join(".cerebro").join("models");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+
+    let result = verify_model_cache(&cache_dir)
+        .and_then(|_| {
+            EmbeddingEngine::new(&conn, cache_dir).map_err(|e| {
+                format!(
+                    "{e} - the local embedding model could not be loaded; \
+                     a one-time internet connection may be required to download it."
+                )
+            })
+        })
+        .map(Arc::new);
+
+    *guard = Some(result.clone());
+    result
+}
+
+/// Generates and stores a semantic embedding for a note (fire-and-forget on save).
+#[tauri::command]
+async fn generate_and_store_embedding(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    note_id: String,
+    content: String,
+) -> Result<(), String> {
+    let engine = get_embedding_engine(&state, &app_handle)?;
+    let conn = db::init_db(&app_handle)?;
+    engine.generate_and_store(&conn, &note_id, &content)
+}
+
+/// Returns the top-K conceptually related notes for a note (HNSW vector search).
+#[tauri::command]
+async fn find_semantic_related_notes(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    note_id: String,
+    top_k: usize,
+) -> Result<Vec<db::SemanticMatch>, String> {
+    let engine = get_embedding_engine(&state, &app_handle)?;
+    let conn = db::init_db(&app_handle)?;
+    engine.find_related(&conn, &note_id, top_k)
+}
+
+/// Embeds every note in the vault that does not yet have an embedding
+/// (first-run backfill after indexing). Inference is batched so large vaults
+/// finish quickly without blocking the Tauri command thread for too long.
+#[tauri::command]
+async fn backfill_embeddings(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<usize, String> {
+    let engine = get_embedding_engine(&state, &app_handle)?;
+    let conn = db::init_db(&app_handle)?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT n.id, n.path FROM notes n
+             LEFT JOIN embeddings e ON e.note_id = n.id
+             WHERE e.note_id IS NULL AND n.path != ''",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let path: String = row.get(1)?;
+            Ok((id, path))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut pending = Vec::new();
+    for row in rows {
+        let (id, path) = row.map_err(|e| e.to_string())?;
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if content.trim().is_empty() {
+            continue;
+        }
+        pending.push((id, content));
+    }
+
+    engine.backfill(&conn, pending)
+}
+
+#[tauri::command]
+fn index_note(
+    app_handle: tauri::AppHandle,
+    id: String,
+    title: String,
+    path: String,
+    aliases: Vec<String>,
+) -> Result<(), String> {
+    let conn = db::init_db(&app_handle)?;
+    db::upsert_note(&conn, &id, &title, &path, &aliases)
+}
+
+#[tauri::command]
+fn get_incoming_backlinks(
+    app_handle: tauri::AppHandle,
+    target_id: String,
+) -> Result<Vec<db::BacklinkInfo>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::get_incoming_backlinks(&conn, &target_id)
+}
+
+#[tauri::command]
+fn start_watching_vault(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+) -> Result<(), String> {
+    {
+        let mut guard = state.watcher_path.lock().unwrap();
+        if guard.as_deref() == Some(&vault_path) {
+            return Ok(());
+        }
+        *guard = Some(vault_path.clone());
+    }
+    watcher::start_vault_watcher(vault_path, app_handle)
 }
 
 #[tauri::command]
@@ -82,6 +304,34 @@ fn linker_apply(
     let mut linker = state.linker.lock().unwrap();
     let engine = linker.as_mut().ok_or("Linker engine not initialized")?;
     engine.apply_file(&file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn apply_approved_links(
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+    approved_links: Vec<LinkMention>
+) -> Result<(), String> {
+    let mut linker = state.linker.lock().unwrap();
+    let engine = linker.as_mut().ok_or("Linker engine not initialized")?;
+
+    let path = Path::new(&file_path);
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    // Extract unique target note IDs
+    let targets: Vec<String> = approved_links.iter()
+        .map(|m| m.target_note_id.clone())
+        .collect();
+
+    // Perform atomic write using the explicit list
+    linker::writer::atomic_write(path, &content, &targets)
+        .map_err(|e| e.to_string())?;
+
+    // Update DB
+    engine.update_db_links(&file_path, &targets)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -258,14 +508,17 @@ fn delete_file(file_path: String) -> Result<(), String> {
 fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
     let old = Path::new(&old_path);
     let new = Path::new(&new_path);
-    if old.exists() {
-        if let Some(parent) = new.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-        }
-        fs::rename(old, new).map_err(|e| e.to_string())?;
+
+    if !old.exists() {
+        return Err(format!("Source file not found: {old_path}"));
     }
+
+    if let Some(parent) = new.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::rename(old, new).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -469,12 +722,68 @@ fn run_extractor_installer(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+fn append_ingestion_log(app: tauri::AppHandle, level: String, message: String) -> Result<(), String> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let log_dir = home.join(".cerebro");
+    fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+
+    let log_path = log_dir.join("ingestion.log");
+
+    let epoch_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64;
+
+    let (year, month, day, hour, minute, second) = civil_from_epoch(epoch_secs);
+    let line = format!(
+        "[{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}] [{level}] {message}\n"
+    );
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Convert UNIX epoch seconds to UTC calendar fields (Howard Hinnant's civil-from-days algorithm).
+fn civil_from_epoch(epoch_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
+    let days = epoch_secs.div_euclid(86_400);
+    let secs_of_day = epoch_secs.rem_euclid(86_400);
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+
+    (year, month, day, hour, minute, second)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             app.manage(AppState {
                 linker: Mutex::new(None),
+                db_path: Mutex::new(None),
+                watcher_path: Mutex::new(None),
+                embeddings: Mutex::new(None),
             });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -487,9 +796,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             init_linker,
+            get_vault_dictionary,
+            index_note,
+            get_incoming_backlinks,
+            start_watching_vault,
             linker_scan,
             linker_diff,
             linker_apply,
+            apply_approved_links,
+            scan_unlinked_mentions,
             select_file,
             select_folder,
             read_vault_files,
@@ -500,6 +815,10 @@ pub fn run() {
             run_ingestion_script,
             run_builtin_extractor_async,
             run_extractor_installer,
+            append_ingestion_log,
+            generate_and_store_embedding,
+            find_semantic_related_notes,
+            backfill_embeddings,
             setup_omniroute_environment
         ])
         .run(tauri::generate_context!())

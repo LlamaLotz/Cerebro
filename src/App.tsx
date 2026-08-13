@@ -1,18 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Editor } from './components/Editor';
 import { GraphView } from './components/GraphView';
 import { AISidebar } from './components/AISidebar';
 import { SettingsModal } from './components/SettingsModal';
 import { IngestModal } from './components/IngestModal';
+import { IngestionLogPanel } from './components/IngestionLogPanel';
+import { useIngestion } from './services/ingestionStore';
 import { AppSettings, NoteFile, tauriAPI } from './types';
-import { 
-  FileText, Network, SplitSquareVertical, Sparkles, 
-  HelpCircle, AlertCircle, X, Terminal, CheckCircle 
-} from 'lucide-react';
+import { linkerService } from './services/linkerService';
+import { backfillEmbeddings, generateAndStoreEmbedding } from './services/semantic';
+import { FileText, Network, SplitSquareVertical, Sparkles } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'cerebro_app_settings';
+
+// Extract `aliases:` entries from a note's YAML frontmatter
+function extractAliases(content: string): string[] {
+  const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) return [];
+  const block = m[1];
+  const out: string[] = [];
+
+  const inline = block.match(/^aliases?:\s*(.+)$/m);
+  if (inline) {
+    out.push(
+      ...inline[1]
+        .replace(/^\[|\]$/g, '')
+        .split(',')
+        .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    );
+  }
+
+  const list = block.match(/^aliases?:\s*\r?\n((?:\s+-\s+.+\r?\n?)+)/m);
+  if (list) {
+    out.push(
+      ...list[1]
+        .split(/\r?\n/)
+        .map((s) => s.trim().replace(/^-\s*/, '').replace(/^["']|["']$/g, ''))
+    );
+  }
+
+  return out.filter((a) => a.length > 0);
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   vaultPath: '',
@@ -36,12 +65,45 @@ export default function App() {
   const [layout, setLayout] = useState<'editor' | 'graph' | 'split'>('split');
   const [showAICoPilot, setShowAICoPilot] = useState(true);
 
-  // Ingestion output console modal state
-  const [ingestOutput, setIngestOutput] = useState<{ isOpen: boolean; success: boolean; output: string }>({
-    isOpen: false,
-    success: true,
-    output: '',
-  });
+  const { addLog, updateProgress } = useIngestion();
+
+  // Debounced snapshot of the graph inputs: updates immediately on note switch,
+  // but only after a typing pause (1s) when the active note is being edited,
+  // so the D3 force simulation is not rebuilt on every keystroke.
+  const [graphNotes, setGraphNotes] = useState<NoteFile[]>([]);
+  const [graphActiveNote, setGraphActiveNote] = useState<NoteFile | null>(null);
+  const graphDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graphNotePathRef = useRef<string | null>(null);
+  const backfillRanRef = useRef(false);
+  // Incremented when the once-per-session semantic backfill completes, so the
+  // Related Notes panel knows embeddings now exist and refreshes itself.
+  const [semanticTick, setSemanticTick] = useState(0);
+
+  useEffect(() => {
+    if (graphDebounceRef.current) clearTimeout(graphDebounceRef.current);
+    if (!activeNote) {
+      graphNotePathRef.current = null;
+      setGraphActiveNote(null);
+      setGraphNotes(notes);
+      return;
+    }
+    if (graphNotePathRef.current !== activeNote.path) {
+      graphNotePathRef.current = activeNote.path;
+      setGraphNotes(notes);
+      setGraphActiveNote(activeNote);
+      return;
+    }
+    graphDebounceRef.current = setTimeout(() => {
+      setGraphNotes(notes);
+      setGraphActiveNote(activeNote);
+    }, 1000);
+  }, [activeNote, notes]);
+
+  useEffect(() => {
+    return () => {
+      if (graphDebounceRef.current) clearTimeout(graphDebounceRef.current);
+    };
+  }, []);
 
   // 1. Load settings from localStorage on startup
   useEffect(() => {
@@ -78,6 +140,18 @@ export default function App() {
       // Sort notes alphabetically by title
       const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
       setNotes(sorted);
+      // Wait for the SQLite index to be fully populated BEFORE the backfill
+      // queries it, otherwise the backfill finds zero notes and embeds nothing.
+      await indexVault(sorted);
+
+      // First-run backfill: embed any notes missing an embedding (once per session)
+      if (!backfillRanRef.current) {
+        backfillRanRef.current = true;
+        const count = await backfillEmbeddings();
+        console.log(`Semantic backfill complete: ${count} notes embedded.`);
+        // Refresh the Related Notes panel now that embeddings exist
+        setSemanticTick((t) => t + 1);
+      }
 
       // Keep activeNote updated with refreshed files
       if (activeNote) {
@@ -90,6 +164,20 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error reading vault files:', err);
+    }
+  };
+
+  // Sync the SQLite vault index with the files on disk
+  const indexVault = async (files: NoteFile[]) => {
+    try {
+      await linkerService.initLinker(['**/*.md']);
+      for (const n of files) {
+        await linkerService.indexNote(n.path, n.title, n.path, extractAliases(n.content));
+      }
+      // Keep the index in sync reactively as files change on disk
+      await linkerService.startWatchingVault(settings.vaultPath);
+    } catch (err) {
+      console.error('Vault indexing failed:', err);
     }
   };
 
@@ -118,41 +206,35 @@ export default function App() {
       alert('Please connect a notes vault folder in settings first.');
       return;
     }
-    
+
     setIsIngesting(true);
-    setIngestOutput({ isOpen: true, success: true, output: 'Initializing ingestion pipeline...' });
-    
-    let args: any = {
+    addLog({ level: 'info', message: 'Initializing ingestion pipeline...' });
+    updateProgress({ status: 'ingesting', current: 0, total: 0, currentFileName: '' });
+
+    const args: any = {
       vaultPath: settings.vaultPath,
       ingestType: type,
       value,
     };
-    
+
     // Always pass a method, map file-mode to ytMethod slot for rust compatibility
-    args.ytMethod = method; 
+    args.ytMethod = method;
 
     try {
-      // Start listening for real-time progress events from Rust
-      const unlistenProgress = await listen<string>('ingestion-progress', (event) => {
-        setIngestOutput((prev) => ({ ...prev, output: prev.output + '\n' + event.payload }));
-      });
-      const unlistenError = await listen<string>('ingestion-error', (event) => {
-        setIngestOutput((prev) => ({ ...prev, output: prev.output + '\n[ERROR] ' + event.payload }));
-      });
-    
-      // Call the async native extractor
+      // Background output is collected by the IngestionProvider listeners
+      // (ingestion-progress / ingestion-error) while the panel is minimized.
       const result = await tauriAPI.runBuiltinExtractorAsync(args);
-    
+
       if (result.success) {
-        setIngestOutput((prev) => ({ ...prev, success: true, output: prev.output + '\n\nDONE: ' + result.output }));
+        addLog({ level: 'success', message: 'DONE: ' + result.output });
+        updateProgress({ status: 'completed' });
       } else {
-        setIngestOutput((prev) => ({ ...prev, success: false, output: prev.output + '\n\nFAILED: ' + result.error }));
+        addLog({ level: 'error', message: 'FAILED: ' + (result.error || result.output) });
+        updateProgress({ status: 'error' });
       }
-    
-      unlistenProgress();
-      unlistenError();
     } catch (err) {
-      setIngestOutput({ isOpen: true, success: false, output: `Critical error: ${err}` });
+      addLog({ level: 'error', message: `Critical error: ${err}` });
+      updateProgress({ status: 'error' });
     } finally {
       setIsIngesting(false);
       // Small delay to allow OS filesystem to finalize writes before refreshing notes
@@ -175,6 +257,9 @@ export default function App() {
       if (activeNote && activeNote.path === filePath) {
         setActiveNote((prev) => (prev ? { ...prev, content } : null));
       }
+
+      // Keep the semantic index warm on save (fire-and-forget)
+      generateAndStoreEmbedding(filePath, content);
     } else {
       console.error('Failed to write file:', result.error);
     }
@@ -243,8 +328,10 @@ export default function App() {
     const formattedNewTitle = newTitleInput.trim();
     if (!formattedNewTitle || formattedNewTitle === note.title) return;
 
-    const folder = note.path.substring(0, note.path.lastIndexOf('/'));
-    const newPath = `${folder}/${formattedNewTitle}.md`;
+    // Split on the last separator (works for both Windows '\' and POSIX '/' paths)
+    const sepIndex = Math.max(note.path.lastIndexOf('/'), note.path.lastIndexOf('\\'));
+    const folder = sepIndex >= 0 ? note.path.substring(0, sepIndex) : '';
+    const newPath = folder ? `${folder}/${formattedNewTitle}.md` : `${formattedNewTitle}.md`;
 
     const result = await tauriAPI.renameFile({
       oldPath: note.path,
@@ -326,7 +413,7 @@ export default function App() {
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Workspace Toolbar/Tabs */}
-        <div className="h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
+        <div className="workspace-toolbar h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
            <div className="flex items-center gap-1 bg-neutral-950 border border-neutral-900 rounded-lg p-1">
              <button
                onClick={() => setLayout('editor')}
@@ -384,16 +471,18 @@ export default function App() {
             <Editor
               note={activeNote}
               allNotes={notes}
+              vaultPath={settings.vaultPath}
               onSaveContent={handleSaveContent}
               onWikiLinkClick={handleWikiLinkClick}
+              semanticRefreshToken={semanticTick}
             />
           )}
 
           {/* Connected Force Graph Network Pane */}
           {(layout === 'graph' || layout === 'split') && (
             <GraphView
-              notes={notes}
-              activeNote={activeNote}
+              notes={graphNotes}
+              activeNote={graphActiveNote}
               onSelectNoteByTitle={handleWikiLinkClick}
             />
           )}
@@ -427,42 +516,8 @@ export default function App() {
         onIngest={handleRunIngest}
       />
 
-      {/* Ingestion Script Output Console Overlay */}
-      {ingestOutput.isOpen && (
-<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-           <div className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl flex flex-col max-h-[80vh]">
-             <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 shrink-0">
-               <h3 className="text-sm font-bold text-neutral-200 flex items-center gap-2">
-                 {ingestOutput.success ? (
-                   <CheckCircle className="w-5 h-5 text-orange-400" />
-                 ) : (
-                   <AlertCircle className="w-5 h-5 text-rose-400" />
-                 )}
-                 Ingestion Script Status: {ingestOutput.success ? 'Success' : 'Failed'}
-               </h3>
-               <button 
-                 onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
-                 className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 p-1 rounded-lg transition-colors"
-               >
-                 <X className="w-4.5 h-4.5" />
-               </button>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-neutral-950 text-neutral-300 whitespace-pre-wrap select-text leading-relaxed">
-               {ingestOutput.output}
-             </div>
- 
-             <div className="px-6 py-3 border-t border-neutral-800/60 bg-neutral-950/40 flex justify-end shrink-0 rounded-b-xl">
-               <button
-                 onClick={() => setIngestOutput((prev) => ({ ...prev, isOpen: false }))}
-                 className="px-4 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold rounded-lg transition-colors border border-neutral-750"
-               >
-                 Close Logs
-               </button>
-             </div>
-           </div>
-         </div>
-      )}
+      {/* Persistent, reopenable ingestion log (minimizable badge + drawer) */}
+      <IngestionLogPanel />
 
     </div>
   );

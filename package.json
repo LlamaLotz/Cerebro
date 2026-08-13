@@ -1,6 +1,7 @@
 {
   "name": "cerebro",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "scripts": {
     "dev": "tauri dev",
@@ -14,7 +15,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "clsx": "^2.1.1",

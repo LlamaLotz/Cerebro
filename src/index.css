@@ -61,3 +61,34 @@
   color: #f1f5f9;
   background-color: rgba(148, 163, 184, 0.2);
 }
+
+/* Performance: layout containment so off-screen lines don't trigger browser layout recalculations */
+.editor-container,
+.markdown-body {
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 500px;
+}
+
+/* Performance: promote frequently animated panels to their own GPU layers */
+.sidebar,
+.workspace-toolbar,
+.editor-body {
+  will-change: transform;
+}
+
+/* Ingestion log drawer slide-up entrance */
+@keyframes ingestion-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.ingestion-drawer {
+  animation: ingestion-drawer-in 0.18s ease-out;
+}

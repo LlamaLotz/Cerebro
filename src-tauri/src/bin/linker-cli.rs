@@ -28,7 +28,8 @@ fn main() {
         }
     }
 
-    let mut engine = app_lib::linker::LinkerEngine::new(db_path, patterns);
+    let mut engine = app_lib::linker::LinkerEngine::new(db_path, patterns)
+        .expect("Failed to open database");
 
     match command.as_str() {
         "scan" => {

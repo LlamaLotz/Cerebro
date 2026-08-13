@@ -1,6 +1,9 @@
 pub mod scanner;
 pub mod differ;
 pub mod writer;
+pub mod auto_linker;
+
+pub use auto_linker::{NoteLinker, TextRange, LinkMention};
 
 use crate::db::Database;
 use std::path::Path;
@@ -12,10 +15,10 @@ pub struct LinkerEngine {
 }
 
 impl LinkerEngine {
-    pub fn new(db_path: &str, patterns: Vec<String>) -> Self {
-        let db = Database::open(db_path).expect("Failed to open database");
+    pub fn new(db_path: &str, patterns: Vec<String>) -> Result<Self, String> {
+        let db = Database::open(db_path).map_err(|e| e.to_string())?;
         let scanner = scanner::Scanner::new(patterns);
-        LinkerEngine { db, scanner }
+        Ok(LinkerEngine { db, scanner })
     }
 
     pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> io::Result<Vec<String>> {
@@ -28,6 +31,10 @@ impl LinkerEngine {
         let new_links = self.scan_file(path.as_ref())?;
         
         Ok(differ::calculate_delta(&existing, &new_links))
+    }
+
+    pub fn update_db_links(&mut self, source: &str, targets: &[String]) -> io::Result<()> {
+        self.db.update_links(source, targets).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
     pub fn apply_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<bool> {

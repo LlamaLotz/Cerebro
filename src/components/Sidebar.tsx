@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   FolderOpen, Plus, Search, FileText, Trash2, Edit3, 
   RefreshCw, Terminal, Settings, ChevronRight, Play 
@@ -36,13 +36,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [search, setSearch] = useState('');
 
-  const filteredNotes = notes.filter((note) => 
-    note.title.toLowerCase().includes(search.toLowerCase()) ||
-    note.content.toLowerCase().includes(search.toLowerCase())
+  const filteredNotes = useMemo(() =>
+    notes.filter((note) =>
+      note.title.toLowerCase().includes(search.toLowerCase()) ||
+      note.content.toLowerCase().includes(search.toLowerCase())
+    ),
+    [notes, search]
   );
 
   return (
-    <div className="w-80 border-r border-slate-900 bg-slate-950 flex flex-col h-full select-none select-none">
+    <div className="sidebar w-80 border-r border-slate-900 bg-slate-950 flex flex-col h-full select-none select-none">
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">
         <div className="flex items-center gap-2">

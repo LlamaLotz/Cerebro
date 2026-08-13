@@ -17,6 +17,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
 
+  // Keep the latest callback in a ref so graph rebuilds are never triggered by
+  // callback identity changes (the expensive D3 simulation only re-runs when
+  // the debounced notes/activeNote props actually change).
+  const selectNoteRef = useRef(onSelectNoteByTitle);
+  useEffect(() => {
+    selectNoteRef.current = onSelectNoteByTitle;
+  }, [onSelectNoteByTitle]);
+
   useEffect(() => {
     if (!svgRef.current) return;
 
@@ -122,7 +130,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
     // 7. Click listener on nodes
     nodeElements.on('click', (event, d: any) => {
-      onSelectNoteByTitle(d.title);
+      selectNoteRef.current(d.title);
     });
 
     // 8. Tooltip hover effects
@@ -190,7 +198,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     return () => {
       simulation.stop();
     };
-  }, [notes, activeNote, onSelectNoteByTitle]);
+  }, [notes, activeNote]);
 
   return (
     <div className="flex-1 bg-slate-950/20 border-r border-slate-900/60 flex flex-col h-full relative select-none">
