@@ -37,6 +37,7 @@ notify = "6.1"
 tokio = { version = "1", features = ["time", "sync", "macros"] }
 fastembed = "3.4"
 hnsw_rs = "0.3"
+rayon = "1.10"
 # Pin ort-sys to the version ort 2.0.0-rc.4 (used by fastembed) was built
 # against; its build script predates the newer TLS feature requirement.
 ort-sys = "=2.0.0-rc.4"

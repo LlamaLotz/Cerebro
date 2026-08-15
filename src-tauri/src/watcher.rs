@@ -5,11 +5,11 @@ use rusqlite::params;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 use crate::db;
-use crate::linker::NoteLinker;
+use crate::engine::indexer::{is_self_write, suppress_self_write, SELF_WRITE_MASK_MS};
 
 const DEBOUNCE_MS: u64 = 500;
 
@@ -26,6 +26,14 @@ pub fn start_vault_watcher(vault_path: String, app_handle: AppHandle) -> Result<
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         if let Ok(event) = res {
+            // Drop app-initiated writes (link footers, H1 syncs, rename
+            // rewrites) so they never trigger a re-indexing loop. The mask is
+            // cleared shortly after by `suppress_self_write`.
+            if let Some(path) = event.paths.first() {
+                if is_self_write(path) {
+                    return;
+                }
+            }
             let _ = tx.blocking_send(event);
         }
     })
@@ -51,11 +59,11 @@ pub fn start_vault_watcher(vault_path: String, app_handle: AppHandle) -> Result<
                         None => break,
                     }
                 }
-                // 500ms debounce window: flushes once events quiet down
-                _ = tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)) => {
-                    if pending.is_empty() {
-                        continue;
-                    }
+                // 500ms debounce window: flushes once events quiet down. The
+                // `if !pending.is_empty()` guard arms the timer only when work
+                // exists, so the branch can never fire (and wake the task) while
+                // the watcher is idle.
+                _ = tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)), if !pending.is_empty() => {
                     let batch = std::mem::take(&mut pending);
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn_blocking(move || {
@@ -133,11 +141,17 @@ fn handle_change(app_handle: &AppHandle, path: &Path) {
     if db::upsert_note(&conn, &path_str, &title, &path_str, &aliases).is_err() {
         return;
     }
+    let _ = db::sync_note_tags(&conn, &path_str, &content);
 
     if let Ok(dictionary) = db::get_vault_dictionary(&conn) {
-        let linker = NoteLinker::new(dictionary);
+        let linker = {
+            let state = app_handle.state::<crate::AppState>();
+            crate::cached_linker(&state, dictionary)
+        };
         let mentions = linker.find_mentions(&content, Some(&path_str));
-        let _ = db::update_backlinks(&conn, &path_str, &mentions);
+        let _ = db::update_backlinks(&conn, &path_str, &mentions, &content);
+        let targets = db::extract_applied_links(&content);
+        let _ = db::update_links_flat(&conn, &path_str, &targets);
     }
 
     let _ = app_handle.emit(
@@ -156,7 +170,7 @@ fn handle_remove(app_handle: &AppHandle, path: &Path) {
     if let Ok(conn) = db::init_db(app_handle) {
         let _ = conn.execute("DELETE FROM notes WHERE id = ?1", params![path_str]);
         let _ = conn.execute(
-            "DELETE FROM backlinks WHERE source_id = ?1 OR target_id = ?1",
+            "DELETE FROM backlinks WHERE source_path = ?1 OR target_path = ?1",
             params![path_str],
         );
         let _ = conn.execute(
@@ -192,7 +206,7 @@ fn handle_rename(app_handle: &AppHandle, from: &Path, to: &Path) {
 
     // 1. Find every source note that links to the old note
     let mut sources: Vec<String> = Vec::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT source_id FROM backlinks WHERE target_id = ?1") {
+    if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT source_path FROM backlinks WHERE target_path = ?1") {
         if let Ok(rows) = stmt.query_map(params![old_path], |row| row.get::<_, String>(0)) {
             for row in rows.flatten() {
                 sources.push(row);
@@ -223,17 +237,20 @@ fn handle_rename(app_handle: &AppHandle, from: &Path, to: &Path) {
             })
             .to_string();
         if updated != content {
+            // Mask this rewrite so the watcher doesn't re-index every source
+            // note (and re-write) in a loop during a rename.
+            suppress_self_write(Path::new(&src), SELF_WRITE_MASK_MS);
             let _ = std::fs::write(src, updated);
         }
     }
 
     // 3. Re-point every graph edge to the new note
     let _ = conn.execute(
-        "UPDATE backlinks SET target_id = ?1 WHERE target_id = ?2",
+        "UPDATE backlinks SET target_path = ?1 WHERE target_path = ?2",
         params![new_path, old_path],
     );
     let _ = conn.execute(
-        "UPDATE backlinks SET source_id = ?1 WHERE source_id = ?2",
+        "UPDATE backlinks SET source_path = ?1 WHERE source_path = ?2",
         params![new_path, old_path],
     );
     let _ = conn.execute(
@@ -253,7 +270,18 @@ fn handle_rename(app_handle: &AppHandle, from: &Path, to: &Path) {
     );
     let _ = conn.execute_batch("PRAGMA foreign_keys = ON");
 
-    // 5. Re-index the renamed note's own outgoing links
+    // 5. Re-point semantic rows (keyed by note path) so the renamed note keeps
+    //    its embeddings instead of leaving ghost block suggestions behind.
+    let _ = conn.execute(
+        "UPDATE embeddings SET note_id = ?1 WHERE note_id = ?2",
+        params![new_path, old_path],
+    );
+    let _ = conn.execute(
+        "UPDATE block_embeddings SET note_id = ?1 WHERE note_id = ?2",
+        params![new_path, old_path],
+    );
+
+    // 6. Re-index the renamed note's own outgoing links
     handle_change(app_handle, to);
 
     let _ = app_handle.emit(

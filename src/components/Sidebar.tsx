@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { 
   FolderOpen, Plus, Search, FileText, Trash2, Edit3, 
-  RefreshCw, Terminal, Settings, ChevronRight, Play 
+  RefreshCw, Terminal, Settings, ChevronRight, Play, PanelLeftClose 
 } from 'lucide-react';
 import { NoteFile, tauriAPI } from '../types';
 
@@ -18,6 +18,7 @@ interface SidebarProps {
   onRunIngest: () => void;
   isIngesting: boolean;
   onOpenSettings: () => void;
+  onCollapse: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -33,19 +34,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRunIngest,
   isIngesting,
   onOpenSettings,
+  onCollapse,
 }) => {
   const [search, setSearch] = useState('');
 
   const filteredNotes = useMemo(() =>
     notes.filter((note) =>
       note.title.toLowerCase().includes(search.toLowerCase()) ||
-      note.content.toLowerCase().includes(search.toLowerCase())
+      (note.content ?? '').toLowerCase().includes(search.toLowerCase())
     ),
     [notes, search]
   );
 
   return (
-    <div className="sidebar w-80 border-r border-slate-900 bg-slate-950 flex flex-col h-full select-none select-none">
+    <div className="sidebar w-full border-r border-slate-900 bg-slate-950 flex flex-col h-full select-none">
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -57,13 +59,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="text-[10px] text-slate-500 font-medium">Knowledge & AI Vault</span>
           </div>
         </div>
-        <button 
-          onClick={onOpenSettings}
-          className="text-slate-400 hover:text-slate-200 hover:bg-slate-900 p-1.5 rounded-lg transition-colors border border-transparent hover:border-slate-800"
-          title="Open Settings"
-        >
-          <Settings className="w-4.5 h-4.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onCollapse}
+            className="text-slate-400 hover:text-slate-200 hover:bg-slate-900 p-1.5 rounded-lg transition-colors border border-transparent hover:border-slate-800"
+            title="Collapse sidebar"
+          >
+            <PanelLeftClose className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onOpenSettings}
+            className="text-slate-400 hover:text-slate-200 hover:bg-slate-900 p-1.5 rounded-lg transition-colors border border-transparent hover:border-slate-800"
+            title="Open Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Note Folder Info & Actions */}

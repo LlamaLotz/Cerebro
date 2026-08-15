@@ -2,8 +2,14 @@ use std::io::{self, Write};
 use std::path::Path;
 use tempfile::NamedTempFile;
 
+use crate::engine::indexer::{suppress_self_write, SELF_WRITE_MASK_MS};
+
 pub fn atomic_write<P: AsRef<Path>>(path: P, content: &str, links: &[String]) -> io::Result<()> {
     let path = path.as_ref();
+
+    // Mask this machine-generated write so the file watcher drops the resulting
+    // events instead of re-indexing (and possibly re-writing) in a loop.
+    suppress_self_write(path, SELF_WRITE_MASK_MS);
     let dir = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No parent directory"))?;
     
     // Create a temp file in the same directory to ensure atomic rename

@@ -92,3 +92,85 @@
 .ingestion-drawer {
   animation: ingestion-drawer-in 0.18s ease-out;
 }
+
+/* Block-level jump flash highlight (CodeMirror line decorations) */
+@keyframes blockFlash {
+  from {
+    background-color: rgba(99, 102, 241, 0.4);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+/* Identical animation under a different name: switching the animation-name
+   on consecutive jumps restarts the flash even on the same line. */
+@keyframes blockFlashAlt {
+  from {
+    background-color: rgba(99, 102, 241, 0.4);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+/* Shared block-jump flash highlight: applied to CodeMirror lines (edit mode)
+   and to preview-mode markdown elements (see Editor's block-jump logic). */
+.block-highlight {
+  animation-duration: 1.5s;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+  border-radius: 2px;
+}
+
+.cm-line.block-highlight.flash-a,
+.flash-a {
+  animation-name: blockFlash;
+}
+
+.cm-line.block-highlight.flash-b,
+.flash-b {
+  animation-name: blockFlashAlt;
+}
+
+/* Standard markdown links to external URLs (preview mode): styled, not navigable */
+.wiki-link-external {
+  color: #94a3b8;
+  background-color: rgba(148, 163, 184, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Find-in-note match highlights (CodeMirror decorations + preview spans) */
+.search-match {
+  background-color: rgba(251, 146, 60, 0.35);
+  border-radius: 2px;
+  color: #fff;
+}
+
+.search-match-active {
+  background-color: rgba(251, 146, 60, 0.9);
+  color: #0f172a;
+  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.9);
+  border-radius: 2px;
+}
+
+/* "@Topic" keyword groups: visually distinct from wiki links (they're
+   groupings, not notes — and are never link-suggested by the engine) */
+.topic-tag {
+  color: #fbbf24;
+  background-color: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 9999px;
+  padding: 0 6px;
+  font-size: 0.78em;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.4;
+}

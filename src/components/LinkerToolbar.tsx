@@ -1,20 +1,22 @@
 import React from 'react';
-import { Link2, ScanSearch, FileSearch } from 'lucide-react';
+import { Link2, ScanSearch, FileSearch, X } from 'lucide-react';
 
 interface LinkerToolbarProps {
   pendingCount: number;
   isScanning: boolean;
   isReady: boolean;
+  isPanelOpen: boolean;
   onScan: () => void;
-  onOpenReview: () => void;
+  onToggleLinks: () => void;
 }
 
 export const LinkerToolbar: React.FC<LinkerToolbarProps> = ({
   pendingCount,
   isScanning,
   isReady,
+  isPanelOpen,
   onScan,
-  onOpenReview,
+  onToggleLinks,
 }) => {
   return (
     <div className="flex items-center gap-1.5">
@@ -32,24 +34,30 @@ export const LinkerToolbar: React.FC<LinkerToolbarProps> = ({
         {isScanning ? 'Scanning...' : 'Scan'}
       </button>
 
-      <button
-        onClick={onOpenReview}
-        disabled={pendingCount === 0}
-        title={pendingCount > 0 ? `Review ${pendingCount} suggested links` : 'No suggestions yet'}
-        className={`relative flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all border ${
-          pendingCount > 0
-            ? 'bg-orange-500/10 border-orange-500/40 text-orange-400 hover:bg-orange-500/20'
-            : 'bg-slate-950 border-slate-800 text-slate-600 cursor-not-allowed'
-        }`}
-      >
-        <FileSearch className="w-3.5 h-3.5" />
-        Review
-        {pendingCount > 0 && (
+      {/* Review button doubles as the links-panel toggle. It only shows while
+          there is something to review — once every suggestion is approved or
+          dismissed it disappears. */}
+      {pendingCount > 0 && (
+        <button
+          onClick={onToggleLinks}
+          title={
+            isPanelOpen
+              ? `Close the links panel (${pendingCount} suggestion${pendingCount === 1 ? '' : 's'})`
+              : `Open the links panel (${pendingCount} suggestion${pendingCount === 1 ? '' : 's'})`
+          }
+          className={`relative flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-all border ${
+            isPanelOpen
+              ? 'bg-orange-500/20 border-orange-500/60 text-orange-300'
+              : 'bg-orange-500/10 border-orange-500/40 text-orange-400 hover:bg-orange-500/20'
+          }`}
+        >
+          {isPanelOpen ? <X className="w-3.5 h-3.5" /> : <FileSearch className="w-3.5 h-3.5" />}
+          {isPanelOpen ? 'Close Links' : 'Review'}
           <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
             {pendingCount}
           </span>
-        )}
-      </button>
+        </button>
+      )}
 
       <Link2 className="w-3.5 h-3.5 text-slate-600" />
     </div>

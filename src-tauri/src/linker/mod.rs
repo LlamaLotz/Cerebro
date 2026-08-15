@@ -37,6 +37,10 @@ impl LinkerEngine {
         self.db.update_links(source, targets).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 
+    pub fn get_note_title(&self, id: &str) -> Result<String, String> {
+        self.db.get_note_title(id)?.ok_or_else(|| format!("Note not found: {}", id))
+    }
+
     pub fn apply_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<bool> {
         let path_ref = path.as_ref();
         let path_str = path_ref.to_string_lossy().to_string();

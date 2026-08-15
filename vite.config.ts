@@ -21,6 +21,8 @@ export default defineConfig({
     watch: {
       usePolling: true,
       interval: 100,
+      // Ignore Rust build output and git objects
+      ignored: ['**/src-tauri/target/**', '**/.git/**', '**/node_modules/**'],
     },
   },
 });

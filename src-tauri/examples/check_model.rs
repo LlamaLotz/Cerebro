@@ -1,5 +1,5 @@
-//! One-off verification: loads the MiniLM model from the local cache
-//! (no network) and checks it produces 384-dim embeddings.
+//! One-off verification: loads the bge-base-en-v1.5 model from the local
+//! cache (no network) and checks it produces 768-dim embeddings.
 //!
 //! Run: `cargo run --example check_model`
 
@@ -10,7 +10,7 @@ fn main() {
     let cache_dir = std::path::Path::new(&home).join(".cerebro").join("models");
 
     let options = InitOptions {
-        model_name: EmbeddingModel::AllMiniLML6V2,
+        model_name: EmbeddingModel::BGEBaseENV15Q,
         execution_providers: Default::default(),
         max_length: 512,
         cache_dir,
@@ -23,6 +23,6 @@ fn main() {
         .expect("embedding failed");
 
     let dim = embeddings[0].len();
-    assert_eq!(dim, 384, "expected 384-dim embedding");
+    assert_eq!(dim, 768, "expected 768-dim embedding");
     println!("OK: model loaded offline, embedding dim = {dim}");
 }

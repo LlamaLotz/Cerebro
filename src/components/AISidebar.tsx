@@ -63,7 +63,7 @@ export const AISidebar: React.FC<AISidebarProps> = ({
           content: `You are Cerebro AI, a professional knowledge-base assistant integrated directly into the user's Obsidian-like markdown note-taking workspace.
 ${
   note
-    ? `You have access to the user's active note titled "${note.title}". Active note contents:\n"""\n${note.content}\n"""`
+    ? `You have access to the user's active note titled "${note.title}". Active note contents:\n"""\n${note.content ?? ''}\n"""`
     : `The user currently has no note selected.`
 }
 Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, or code sections as needed.`
@@ -107,11 +107,16 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
     try {
       let response = '';
       if (action === 'summarize') {
-        response = await summarizeNote(config, note.title, note.content);
+        response = await summarizeNote(config, note.title, note.content ?? '');
       } else if (action === 'connect') {
-        response = await suggestConnections(config, note.title, note.content, allNotes);
+        response = await suggestConnections(
+          config,
+          note.title,
+          note.content ?? '',
+          allNotes.map((n) => ({ title: n.title, content: n.content ?? '' }))
+        );
       } else {
-        response = await suggestMetadata(config, note.title, note.content);
+        response = await suggestMetadata(config, note.title, note.content ?? '');
       }
 
       setMessages((prev) => [...prev, { role: 'assistant', content: response }]);

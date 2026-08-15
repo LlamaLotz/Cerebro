@@ -42,6 +42,12 @@ impl NoteLinker {
             let matched_text = &content[start..end];
             let target_note_id = &self.dictionary[mat.pattern()].0;
 
+            // 0. "@Topic" keywords are topic groups (e.g. @Astrology, @Math),
+            //    never unlinked mentions — skip any match preceded by '@'.
+            if start > 0 && content.as_bytes()[start - 1] == b'@' {
+                continue;
+            }
+
             // 1. Skip self-referential links
             if let Some(curr_id) = current_note_id {
                 if target_note_id == curr_id {
@@ -97,6 +103,12 @@ pub fn extract_ignored_ranges(content: &str) -> Vec<TextRange> {
     // Existing wikilinks [[...]]
     let re_wikilinks = Regex::new(r"\[\[[^\]]*\]\]").unwrap();
     for mat in re_wikilinks.find_iter(content) {
+        ranges.push(TextRange { start: mat.start(), end: mat.end() });
+    }
+
+    // Machine-generated linker footer (approved links written by atomic_write)
+    let re_linker_footer = Regex::new(r"<!--\s*LINKER_START\s*-->[\s\S]*?(?:<!--\s*LINKER_END\s*-->|$)").unwrap();
+    for mat in re_linker_footer.find_iter(content) {
         ranges.push(TextRange { start: mat.start(), end: mat.end() });
     }
 

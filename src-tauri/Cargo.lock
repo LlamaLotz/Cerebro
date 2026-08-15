@@ -160,6 +160,7 @@ dependencies = [
  "memmap2",
  "notify",
  "ort-sys",
+ "rayon",
  "regex",
  "rfd",
  "rusqlite",

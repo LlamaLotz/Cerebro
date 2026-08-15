@@ -1,17 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { NoteFile, GraphNode, GraphLink } from '../types';
-import { buildGraphData } from '../utils/markdownParser';
 import { Network, HelpCircle } from 'lucide-react';
 
 interface GraphViewProps {
-  notes: NoteFile[];
+  graphData: { nodes: GraphNode[]; links: GraphLink[] };
   activeNote: NoteFile | null;
   onSelectNoteByTitle: (title: string) => void;
 }
 
 export const GraphView: React.FC<GraphViewProps> = ({
-  notes,
+  graphData,
   activeNote,
   onSelectNoteByTitle,
 }) => {
@@ -28,8 +27,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
   useEffect(() => {
     if (!svgRef.current) return;
 
-    // 1. Build graph nodes and links using our utility
-    const { nodes, links } = buildGraphData(notes);
+    // 1. Nodes/links are served from SQLite (zero-IPC graph snapshot)
+    const { nodes, links } = graphData;
 
     // Deep copy data so D3 can mutate it for simulation
     const d3Nodes = nodes.map((d) => ({ ...d }));
@@ -198,7 +197,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     return () => {
       simulation.stop();
     };
-  }, [notes, activeNote]);
+  }, [graphData, activeNote]);
 
   return (
     <div className="flex-1 bg-slate-950/20 border-r border-slate-900/60 flex flex-col h-full relative select-none">

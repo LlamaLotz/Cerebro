@@ -1,9 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 use std::process::{Command, Stdio};
-use walkdir::WalkDir;
 use tauri::{Manager, Window, Emitter};
+use rusqlite::params;
 
 mod db;
 mod engine;
@@ -14,6 +13,7 @@ use linker::{LinkerEngine, NoteLinker, LinkMention};
 use std::sync::{Arc, Mutex};
 
 use crate::engine::embeddings::EmbeddingEngine;
+use crate::engine::indexer::{suppress_self_write, SELF_WRITE_MASK_MS};
 
 pub struct AppState {
     pub linker: Mutex<Option<LinkerEngine>>,
@@ -23,6 +23,15 @@ pub struct AppState {
     /// are memoized so a broken model isn't re-initialized (and doesn't
     /// re-attempt network downloads) on every scan.
     pub embeddings: Mutex<Option<Result<Arc<EmbeddingEngine>, String>>>,
+    /// Serializes all ONNX inference (backfill + per-save embeds). fastembed's
+    /// onnxruntime fans out across every core per session, so two concurrent
+    /// sessions double the all-core spike; this lock guarantees exactly one
+    /// inference job at a time.
+    pub embed_lock: Mutex<()>,
+    /// Cached Aho-Corasick automaton (NoteLinker), rebuilt only when the vault
+    /// dictionary changes instead of on every scan (per-keystroke-pause scans
+    /// rebuild it today, which is pure CPU waste).
+    pub linker_cache: Mutex<Option<(Vec<(String, String)>, Arc<NoteLinker>)>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -40,30 +49,24 @@ impl From<linker::differ::Delta> for Delta {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct NoteFile {
-    pub path: String,
-    pub relative_path: String,
-    pub name: String,
-    pub title: String,
-    pub content: String,
-    pub updated_at: f64,
-}
-
 #[tauri::command]
 fn scan_unlinked_mentions(
+    state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
     content: String,
     current_note_id: String,
     dictionary: Vec<(String, String)>,
 ) -> Vec<LinkMention> {
-    let linker = NoteLinker::new(dictionary);
+    let linker = cached_linker(&state, dictionary);
     let mentions = linker.find_mentions(&content, Some(&current_note_id));
 
     // Keep the backlink graph in sync with each scan
     if let Ok(conn) = db::init_db(&app_handle) {
-        let _ = db::update_backlinks(&conn, &current_note_id, &mentions);
+        let _ = db::update_backlinks(&conn, &current_note_id, &mentions, &content);
+        // Applied [[wikilinks]] drive the graph tab; resync them here too so
+        // links removed from the note body never linger as ghost edges.
+        let targets = db::extract_applied_links(&content);
+        let _ = db::update_links_flat(&conn, &current_note_id, &targets);
     }
 
     mentions
@@ -96,11 +99,20 @@ fn get_vault_dictionary(app_handle: tauri::AppHandle) -> Result<Vec<(String, Str
     db::get_vault_dictionary(&conn)
 }
 
-/// Model repo + files required by `fastembed` for `all-MiniLM-L6-v2`.
-const EMBEDDING_REPO_DIR: &str = "models--Qdrant--all-MiniLM-L6-v2-onnx";
+#[tauri::command]
+fn get_topic_groups(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<(String, Vec<(String, String)>)>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::get_topic_groups(&conn)
+}
+
+/// Model repo + files required by `fastembed` for `bge-base-en-v1.5`
+/// (Qdrant int8-quantized build).
+const EMBEDDING_REPO_DIR: &str = "models--Qdrant--bge-base-en-v1.5-onnx-Q";
 const EMBEDDING_REQUIRED_FILES: [&str; 5] = [
     "config.json",
-    "model.onnx",
+    "model_optimized.onnx",
     "tokenizer.json",
     "tokenizer_config.json",
     "special_tokens_map.json",
@@ -173,6 +185,29 @@ fn get_embedding_engine(
     result
 }
 
+/// Returns a `NoteLinker` for `dictionary`, reusing the cached Aho-Corasick
+/// automaton when the dictionary is unchanged (building it is the expensive
+/// part, and `scan_unlinked_mentions`/`write_file` run it on every save).
+pub fn cached_linker(
+    state: &AppState,
+    dictionary: Vec<(String, String)>,
+) -> Arc<NoteLinker> {
+    let mut cache = state.linker_cache.lock().unwrap();
+    if let Some((cached_dict, linker)) = cache.as_ref() {
+        if *cached_dict == dictionary {
+            return linker.clone();
+        }
+    }
+    let linker = Arc::new(NoteLinker::new(dictionary.clone()));
+    *cache = Some((dictionary, linker.clone()));
+    linker
+}
+
+/// Holds the global ONNX-inference lock for the duration of an embedding job.
+pub fn embed_guard(state: &AppState) -> std::sync::MutexGuard<'_, ()> {
+    state.embed_lock.lock().unwrap()
+}
+
 /// Generates and stores a semantic embedding for a note (fire-and-forget on save).
 #[tauri::command]
 async fn generate_and_store_embedding(
@@ -181,6 +216,7 @@ async fn generate_and_store_embedding(
     note_id: String,
     content: String,
 ) -> Result<(), String> {
+    let _lock = embed_guard(&state);
     let engine = get_embedding_engine(&state, &app_handle)?;
     let conn = db::init_db(&app_handle)?;
     engine.generate_and_store(&conn, &note_id, &content)
@@ -199,43 +235,167 @@ async fn find_semantic_related_notes(
     engine.find_related(&conn, &note_id, top_k)
 }
 
+/// Generates and stores block-level embeddings for a note (fire-and-forget).
+#[tauri::command]
+async fn generate_and_store_block_embeddings(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    note_id: String,
+    content: String,
+) -> Result<(), String> {
+    let _lock = embed_guard(&state);
+    let engine = get_embedding_engine(&state, &app_handle)?;
+    let conn = db::init_db(&app_handle)?;
+    engine.generate_and_store_blocks(&conn, &note_id, &content)
+}
+
+/// Returns the top-K semantically matching blocks from other notes.
+#[tauri::command]
+async fn find_block_related_notes(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    note_id: String,
+    top_k: usize,
+) -> Result<Vec<db::BlockEmbedding>, String> {
+    let engine = get_embedding_engine(&state, &app_handle)?;
+    let conn = db::init_db(&app_handle)?;
+    engine.find_block_matches(&conn, &note_id, top_k)
+}
+
 /// Embeds every note in the vault that does not yet have an embedding
 /// (first-run backfill after indexing). Inference is batched so large vaults
 /// finish quickly without blocking the Tauri command thread for too long.
+///
+/// Notes are processed in bounded chunks so a large vault's contents are
+/// never all held in memory at once.
+const BACKFILL_NOTE_CHUNK: usize = 64;
+
 #[tauri::command]
 async fn backfill_embeddings(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<usize, String> {
-    let engine = get_embedding_engine(&state, &app_handle)?;
+    let _lock = embed_guard(&state);
     let conn = db::init_db(&app_handle)?;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT n.id, n.path FROM notes n
-             LEFT JOIN embeddings e ON e.note_id = n.id
-             WHERE e.note_id IS NULL AND n.path != ''",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |row| {
-            let id: String = row.get(0)?;
-            let path: String = row.get(1)?;
-            Ok((id, path))
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut pending = Vec::new();
-    for row in rows {
-        let (id, path) = row.map_err(|e| e.to_string())?;
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        if content.trim().is_empty() {
-            continue;
+    // Topic tags must reflect note content regardless of embedding state:
+    // re-extract @keyword mentions for every note so tags that no longer
+    // meet the @tag boundary rule (e.g. emails like contact@yahoo.com) or
+    // were removed by external edits never linger as ghost tags. Runs even
+    // if the model below fails to load.
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, path FROM notes WHERE path != ''")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                Ok((id, path))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            let (id, path) = row.map_err(|e| e.to_string())?;
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let _ = db::sync_note_tags(&conn, &id, &content);
         }
-        pending.push((id, content));
     }
 
-    engine.backfill(&conn, pending)
+    let engine = get_embedding_engine(&state, &app_handle)?;
+
+    let mut total = 0usize;
+
+    // Note-level backfill: notes with no whole-note embedding yet.
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT n.id, n.path FROM notes n
+                 LEFT JOIN embeddings e ON e.note_id = n.id
+                 WHERE e.note_id IS NULL AND n.path != ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                Ok((id, path))
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut pending: Vec<(String, String)> = Vec::with_capacity(BACKFILL_NOTE_CHUNK);
+        for row in rows {
+            let (id, path) = row.map_err(|e| e.to_string())?;
+            // Skip oversized notes up front (metadata only) so multi-MB notes
+            // never get read into memory or embedded (see MAX_EMBED_CHARS).
+            let too_large = std::fs::metadata(&path)
+                .map(|m| m.len() > crate::engine::embeddings::MAX_EMBED_CHARS as u64)
+                .unwrap_or(false);
+            if too_large {
+                println!("[embeddings] skipping note backfill for oversized note: {path}");
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            if content.trim().is_empty() {
+                continue;
+            }
+            pending.push((id, content));
+            if pending.len() >= BACKFILL_NOTE_CHUNK {
+                total += engine.backfill(&conn, std::mem::take(&mut pending))?;
+            }
+        }
+        if !pending.is_empty() {
+            total += engine.backfill(&conn, pending)?;
+        }
+    }
+
+    // Block-level backfill: notes with no block embeddings yet, or notes whose
+    // existing (pre-cap) block count exceeds the per-note cap — those get
+    // re-split and re-embedded with the consolidated splitter.
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT n.id, n.path FROM notes n
+                 LEFT JOIN (
+                    SELECT note_id, COUNT(*) AS cnt FROM block_embeddings GROUP BY note_id
+                 ) b ON b.note_id = n.id
+                 WHERE n.path != '' AND (b.note_id IS NULL OR b.cnt > ?1)",
+            )
+            .map_err(|e| e.to_string())?;
+        let cap = crate::engine::embeddings::MAX_BLOCKS_PER_NOTE as i64;
+        let rows = stmt
+            .query_map([cap], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                Ok((id, path))
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut pending_blocks: Vec<(String, String)> =
+            Vec::with_capacity(BACKFILL_NOTE_CHUNK);
+        for row in rows {
+            let (id, path) = row.map_err(|e| e.to_string())?;
+            let too_large = std::fs::metadata(&path)
+                .map(|m| m.len() > crate::engine::embeddings::MAX_EMBED_CHARS as u64)
+                .unwrap_or(false);
+            if too_large {
+                println!("[embeddings] skipping block backfill for oversized note: {path}");
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            if content.trim().is_empty() {
+                continue;
+            }
+            pending_blocks.push((id, content));
+            if pending_blocks.len() >= BACKFILL_NOTE_CHUNK {
+                total += engine.backfill_blocks(&conn, std::mem::take(&mut pending_blocks))?;
+            }
+        }
+        if !pending_blocks.is_empty() {
+            total += engine.backfill_blocks(&conn, pending_blocks)?;
+        }
+    }
+
+    Ok(total)
 }
 
 #[tauri::command]
@@ -316,14 +476,32 @@ fn apply_approved_links(
     let engine = linker.as_mut().ok_or("Linker engine not initialized")?;
 
     let path = Path::new(&file_path);
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
 
-    // Extract unique target note IDs
-    let targets: Vec<String> = approved_links.iter()
-        .map(|m| m.target_note_id.clone())
-        .collect();
+    // Rewrite the body first: replace each approved mention with a real
+    // [[wikilink]]. Sort by start descending so earlier offsets stay valid
+    // while replacing from the end of the file backwards.
+    let mut mentions = approved_links;
+    mentions.sort_by(|a, b| b.start.cmp(&a.start));
 
-    // Perform atomic write using the explicit list
+    let mut targets: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for m in &mentions {
+        let title = engine
+            .get_note_title(&m.target_note_id)
+            .unwrap_or_else(|_| m.target_note_id.clone());
+        let replacement = if m.matched_text == title {
+            format!("[[{}]]", title)
+        } else {
+            format!("[[{}|{}]]", title, m.matched_text)
+        };
+        content.replace_range(m.start..m.end, &replacement);
+        if seen.insert(m.target_note_id.clone()) {
+            targets.push(m.target_note_id.clone());
+        }
+    }
+
+    // Perform atomic write (footer lists the applied targets once each)
     linker::writer::atomic_write(path, &content, &targets)
         .map_err(|e| e.to_string())?;
 
@@ -332,6 +510,43 @@ fn apply_approved_links(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn add_denied_link(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+    kind: String,
+    target: String,
+    matched_text: Option<String>,
+) -> Result<(), String> {
+    let conn = db::init_db(&app_handle)?;
+    db::add_denied_link(&conn, &note_path, &kind, &target, matched_text.as_deref())
+}
+
+#[tauri::command]
+fn get_denied_links(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+) -> Result<Vec<db::DeniedLink>, String> {
+    let conn = db::init_db(&app_handle)?;
+    // Drop ghost entries (formatted/unlinked text, deleted blocks) before
+    // returning, so the Denied/Hidden tabs only show live links.
+    let content = std::fs::read_to_string(&note_path).ok();
+    db::prune_stale_denied_links(&conn, &note_path, content.as_deref())?;
+    db::get_denied_links(&conn, &note_path)
+}
+
+#[tauri::command]
+fn remove_denied_link(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+    kind: Option<String>,
+    target: Option<String>,
+    matched_text: Option<String>,
+) -> Result<(), String> {
+    let conn = db::init_db(&app_handle)?;
+    db::remove_denied_link(&conn, &note_path, kind.as_deref(), target.as_deref(), matched_text.as_deref())
 }
 
 #[tauri::command]
@@ -400,74 +615,86 @@ fn select_folder() -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
+/// Streams the vault through a bounded worker pool and returns lightweight
+/// note metadata (no contents) so the sidebar renders without an IPC flood.
+/// The full knowledge graph is rebuilt in SQLite as a side effect.
 #[tauri::command]
-fn read_vault_files(vault_path: String) -> Vec<NoteFile> {
-    let mut results = Vec::new();
-    let root_path = Path::new(&vault_path);
-    if !root_path.exists() {
-        return results;
-    }
+fn index_vault(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+) -> Result<Vec<engine::indexer::IndexedFile>, String> {
+    engine::indexer::index_vault(Path::new(&vault_path), app_handle)
+}
 
-    for entry in WalkDir::new(root_path)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if path.is_file() {
-            // Skip hidden directories and hidden files (starting with .)
-            let is_hidden = path.components().any(|c| {
-                c.as_os_str().to_string_lossy().starts_with('.')
-            });
-            if is_hidden {
-                continue;
-            }
+/// Fetches the incoming backlinks (with source line ranges) for the currently
+/// active note only. The whole graph never crosses the IPC boundary.
+#[tauri::command]
+fn get_backlinks_for_note(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+) -> Result<Vec<db::BacklinkInfo>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::get_backlinks_for_note(&conn, &note_path)
+}
 
-            if let Some(ext) = path.extension() {
-                if ext == "md" || ext == "markdown" {
-                    let relative_path = match path.strip_prefix(root_path) {
-                        Ok(p) => p.to_string_lossy().to_string(),
-                        Err(_) => continue,
-                    };
-
-                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    let title = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-
-                    let content = fs::read_to_string(path).unwrap_or_default();
-                    let metadata = fs::metadata(path);
-                    let updated_at = match metadata {
-                        Ok(m) => m.modified()
-                            .unwrap_or(UNIX_EPOCH)
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as f64,
-                        Err(_) => 0.0,
-                    };
-
-                    results.push(NoteFile {
-                        path: path.to_string_lossy().to_string(),
-                        relative_path,
-                        name,
-                        title,
-                        content,
-                        updated_at,
-                    });
-                }
-            }
-        }
-    }
-    results
+/// Serves the content-free knowledge graph (nodes + edges) from SQLite so the
+/// D3 force-graph never holds the full vault contents in React state.
+#[tauri::command]
+fn get_graph(app_handle: tauri::AppHandle) -> Result<db::GraphPayload, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::get_graph(&conn)
 }
 
 #[tauri::command]
-fn write_file(file_path: String, content: String) -> Result<(), String> {
+fn write_file(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    file_path: String,
+    content: String,
+) -> Result<(), String> {
     let path = Path::new(&file_path);
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
     }
-    fs::write(path, content).map_err(|e| e.to_string())?;
+    // Mask the write from the vault watcher. The frontend already refreshed
+    // its own state after saving, so letting the watcher re-index here would
+    // burn CPU (full dictionary rebuild + mention scan per autosave) and
+    // cause a `vault-changed` echo back into the webview on every keystroke.
+    suppress_self_write(path, SELF_WRITE_MASK_MS);
+    fs::write(path, &content).map_err(|e| e.to_string())?;
+
+    // The watcher is masked for app-initiated writes, so the applied-link
+    // graph (which the D3 graph tab reads from) would otherwise go stale —
+    // links removed from the note body would linger as "ghost" edges until a
+    // full re-index. Keep the SQLite graph in sync right here, every save:
+    // notes row + applied [[wikilinks]] + mention backlinks. This is cheap
+    // (regex + Aho-Corasick) and makes the graph 1:1 with the vault.
+    if let Ok(conn) = db::init_db(&app_handle) {
+        let title = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let aliases = watcher::extract_aliases(&content);
+        let _ = db::upsert_note(&conn, &file_path, &title, &file_path, &aliases);
+        let _ = db::sync_note_tags(&conn, &file_path, &content);
+
+        let targets = db::extract_applied_links(&content);
+        let _ = db::update_links_flat(&conn, &file_path, &targets);
+
+        if let Ok(dictionary) = db::get_vault_dictionary(&conn) {
+            let linker = cached_linker(&state, dictionary);
+            let mentions = linker.find_mentions(&content, Some(&file_path));
+            let _ = db::update_backlinks(&conn, &file_path, &mentions, &content);
+        }
+    }
     Ok(())
+}
+
+#[tauri::command]
+fn read_file(file_path: String) -> Result<String, String> {
+    fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -491,15 +718,37 @@ fn create_file(vault_path: String, relative_path: String, content: Option<String
     }
 
     let file_content = content.unwrap_or_default();
+    // Mask the create event: the frontend re-indexes immediately after, so a
+    // watcher re-scan would be duplicate work.
+    suppress_self_write(&file_path, SELF_WRITE_MASK_MS);
     fs::write(&file_path, file_content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-fn delete_file(file_path: String) -> Result<(), String> {
+fn delete_file(app_handle: tauri::AppHandle, file_path: String) -> Result<(), String> {
     let path = Path::new(&file_path);
     if path.exists() {
+        // Mask the remove event: the frontend re-indexes immediately after.
+        suppress_self_write(path, SELF_WRITE_MASK_MS);
         fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    // The masked Remove event never reaches the watcher, so purge the note's
+    // graph rows here (notes, backlinks, links, embeddings) — otherwise the
+    // deleted note would linger as a ghost node/edge in the graph tab.
+    if let Ok(conn) = db::init_db(&app_handle) {
+        let _ = conn.execute("DELETE FROM notes WHERE id = ?1", params![file_path]);
+        let _ = conn.execute(
+            "DELETE FROM backlinks WHERE source_path = ?1 OR target_path = ?1",
+            params![file_path],
+        );
+        let _ = conn.execute(
+            "DELETE FROM links WHERE source = ?1 OR target = ?1",
+            params![file_path],
+        );
+        let _ = conn.execute("DELETE FROM denied_links WHERE note_path = ?1", params![file_path]);
+        let _ = crate::db::clear_block_embeddings(&conn, &file_path);
+        let _ = conn.execute("DELETE FROM embeddings WHERE note_id = ?1", params![file_path]);
     }
     Ok(())
 }
@@ -775,6 +1024,56 @@ fn civil_from_epoch(epoch_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
     (year, month, day, hour, minute, second)
 }
 
+/// Appends an app action/error log line. Logs are written to a folder named
+/// `appLogs` (next to the existing `.cerebro` data), organized by date:
+///
+/// ```text
+/// ~/.cerebro/appLogs/2026-08-14/actions.log   <- app actions (info level)
+/// ~/.cerebro/appLogs/2026-08-14/errors.log    <- app errors
+/// ```
+///
+/// Each line carries a full timestamp: `[YYYY-MM-DD HH:MM:SS] [LEVEL] message`.
+#[tauri::command]
+fn append_app_log(app: tauri::AppHandle, level: String, message: String) -> Result<(), String> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let log_root = home.join(".cerebro").join("appLogs");
+
+    let epoch_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64;
+
+    let (year, month, day, hour, minute, second) = civil_from_epoch(epoch_secs);
+
+    // Daily subfolder so logs are naturally sorted by date.
+    let day_dir = log_root.join(format!("{year:04}-{month:02}-{day:02}"));
+    fs::create_dir_all(&day_dir).map_err(|e| e.to_string())?;
+
+    let level_upper = level.to_uppercase();
+    let file_name = if level_upper == "ERROR" || level_upper == "WARN" {
+        "errors.log"
+    } else {
+        "actions.log"
+    };
+    let log_path = day_dir.join(file_name);
+
+    let line = format!(
+        "[{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}] [{level_upper}] {message}\n"
+    );
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -784,6 +1083,8 @@ pub fn run() {
                 db_path: Mutex::new(None),
                 watcher_path: Mutex::new(None),
                 embeddings: Mutex::new(None),
+                embed_lock: Mutex::new(()),
+                linker_cache: Mutex::new(None),
             });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -797,6 +1098,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_linker,
             get_vault_dictionary,
+            get_topic_groups,
             index_note,
             get_incoming_backlinks,
             start_watching_vault,
@@ -804,11 +1106,17 @@ pub fn run() {
             linker_diff,
             linker_apply,
             apply_approved_links,
+            add_denied_link,
+            get_denied_links,
+            remove_denied_link,
             scan_unlinked_mentions,
+            get_backlinks_for_note,
+            get_graph,
+            index_vault,
             select_file,
             select_folder,
-            read_vault_files,
             write_file,
+            read_file,
             create_file,
             delete_file,
             rename_file,
@@ -816,7 +1124,10 @@ pub fn run() {
             run_builtin_extractor_async,
             run_extractor_installer,
             append_ingestion_log,
+            append_app_log,
             generate_and_store_embedding,
+            generate_and_store_block_embeddings,
+            find_block_related_notes,
             find_semantic_related_notes,
             backfill_embeddings,
             setup_omniroute_environment

@@ -5,13 +5,16 @@ export interface NoteFile {
   relativePath: string;
   name: string;
   title: string;
-  content: string;
+  // Metadata-only until the note is opened: `undefined` means "not loaded
+  // yet" (and must be distinguished from a genuinely empty note, `""`).
+  content?: string;
   updatedAt: number;
 }
 
 export interface WikiLink {
   targetTitle: string;
   alias?: string;
+  blockId?: string;
   raw: string;
 }
 
@@ -20,6 +23,23 @@ export interface GraphNode {
   title: string;
   exists: boolean;
   linksCount: number;
+}
+
+// Content-free graph snapshot served from the SQLite index (zero-IPC vault).
+export interface GraphNodeMeta {
+  id: string;
+  title: string;
+  exists: boolean;
+}
+
+export interface GraphLinkMeta {
+  source: string;
+  target: string;
+}
+
+export interface GraphPayload {
+  nodes: GraphNodeMeta[];
+  links: GraphLinkMeta[];
 }
 
 export interface GraphLink {
@@ -47,8 +67,19 @@ export const tauriAPI = {
   selectFolder: async (): Promise<string | null> => {
     return await invoke<string | null>('select_folder');
   },
-  readVaultFiles: async (vaultPath: string): Promise<NoteFile[]> => {
-    return await invoke<NoteFile[]>('read_vault_files', { vaultPath });
+  // Indexes the vault in Rust (bounded worker pool) and returns lightweight
+  // metadata WITHOUT contents (`content` is absent). Note contents are fetched
+  // lazily via `readFile` when opened; the Editor/App normalize `undefined`
+  // to an empty string where needed.
+  indexVault: async (vaultPath: string): Promise<NoteFile[]> => {
+    return await invoke<NoteFile[]>('index_vault', { vaultPath });
+  },
+  // Content-free knowledge graph (nodes + edges) straight from SQLite.
+  getGraph: async (): Promise<GraphPayload> => {
+    return await invoke<GraphPayload>('get_graph');
+  },
+  readFile: async (filePath: string): Promise<string> => {
+    return await invoke<string>('read_file', { filePath });
   },
   writeFile: async (data: { filePath: string; content: string }): Promise<{ success: boolean; error?: string }> => {
     try {
