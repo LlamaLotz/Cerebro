@@ -30,7 +30,7 @@ const HNSW_EF_SEARCH: usize = 128;
 /// panel shows an empty state instead of junk suggestions. Tuned up to 0.75 to
 /// kill false positives on short notes whose token-average embeddings skim
 /// close to anything.
-const MIN_SIMILARITY_SCORE: f32 = 0.75;
+const MIN_SIMILARITY_SCORE: f32 = 0.70;
 
 /// Number of the active note's own blocks used as topical query units when
 /// searching for related notes/blocks. A long note's whole-document embedding

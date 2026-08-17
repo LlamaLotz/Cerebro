@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+pub mod history;
+
 use crate::linker::LinkMention;
 
 pub const DB_FILENAME: &str = "cerebro_vault.db";
@@ -270,6 +272,23 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(tag_name);
+
+        -- Version history base and deltas for version control
+        CREATE TABLE IF NOT EXISTS note_history_base (
+            note_path TEXT PRIMARY KEY,
+            original_content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS note_history_deltas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_path TEXT NOT NULL,
+            delta_patch TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (note_path) REFERENCES note_history_base(note_path) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_note_history_deltas_path ON note_history_deltas(note_path);
+        CREATE INDEX IF NOT EXISTS idx_note_history_deltas_path_id ON note_history_deltas(note_path, id ASC);
         "#,
     )
     .map_err(|e| e.to_string())

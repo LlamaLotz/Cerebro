@@ -1074,6 +1074,49 @@ fn append_app_log(app: tauri::AppHandle, level: String, message: String) -> Resu
     Ok(())
 }
 
+#[tauri::command]
+fn format_note_content(content: String) -> Result<String, String> {
+    Ok(crate::engine::formatter::format_note_content(&content))
+}
+
+#[tauri::command]
+fn record_note_version(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+    content: String,
+) -> Result<Option<i64>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::history::record_note_version(&conn, &note_path, &content)
+}
+
+#[tauri::command]
+fn reconstruct_note_version(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+    target_delta_id: Option<i64>,
+) -> Result<String, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::history::reconstruct_note_version(&conn, &note_path, target_delta_id)
+}
+
+#[tauri::command]
+fn get_note_history(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+) -> Result<Option<db::history::NoteVersionHistory>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::history::get_note_history(&conn, &note_path)
+}
+
+#[tauri::command]
+fn get_all_reconstructed_versions(
+    app_handle: tauri::AppHandle,
+    note_path: String,
+) -> Result<Vec<db::history::ReconstructedVersion>, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::history::get_all_reconstructed_versions(&conn, &note_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1130,7 +1173,12 @@ pub fn run() {
             find_block_related_notes,
             find_semantic_related_notes,
             backfill_embeddings,
-            setup_omniroute_environment
+            setup_omniroute_environment,
+            format_note_content,
+            record_note_version,
+            reconstruct_note_version,
+            get_note_history,
+            get_all_reconstructed_versions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

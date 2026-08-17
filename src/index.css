@@ -70,6 +70,13 @@
   contain-intrinsic-size: 1px 500px;
 }
 
+/* The virtualized band swaps spacers for real content on every scroll/jump;
+   Chromium's scroll anchoring would fight the manual snap corrections and
+   cause a visible "scrolled down then back up" double-move. */
+.markdown-body {
+  overflow-anchor: none;
+}
+
 /* Performance: promote frequently animated panels to their own GPU layers */
 .sidebar,
 .workspace-toolbar,

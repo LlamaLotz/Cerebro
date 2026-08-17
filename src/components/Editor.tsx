@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Undo2 } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Undo2, Info, Copy, Check } from 'lucide-react';
 import { NoteFile, WikiLink } from '../types';
 import { segmentContent, extractWikiLinks, findBlockLine, findLinkAtOffset } from '../utils/markdownParser';
 import { formatNote } from '../utils/formatter';
@@ -60,6 +60,57 @@ const SEMANTIC_SCAN_THROTTLE_MS = 10_000;
 
 // Autosave delay after the last keystroke
 const SAVE_DEBOUNCE_MS = 800;
+
+// Parses extraction metadata (engine/method + source file or URL) out of the
+// note body. Two sources are supported: YAML frontmatter keys written by the
+// extractor pipelines, and the standard markdown header lines
+// (`**Engine:**`, `**Source URL:**`, `**Source File:**`, `**Source:**`) that
+// the master extractor writes into every clean note.
+function getNoteExtractionMetadata(content: string): { extractionMethod: string | null; source: string | null } {
+  if (!content) return { extractionMethod: null, source: null };
+
+  let extractionMethod: string | null = null;
+  let source: string | null = null;
+
+  const yamlMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (yamlMatch) {
+    for (const line of yamlMatch[1].split('\n')) {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx < 0) continue;
+      const key = line.slice(0, colonIdx).trim().toLowerCase();
+      let value = line.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+      if (value.startsWith('[')) value = value.replace(/^\[|\]$/g, '');
+      if (!value) continue;
+      if (['engine', 'extraction_method', 'extraction-method', 'method'].includes(key)) {
+        extractionMethod = value;
+      } else if (['source', 'source_url', 'source-url', 'source_file', 'source-file', 'url', 'file'].includes(key)) {
+        source = value;
+      }
+    }
+  }
+
+  if (!extractionMethod) {
+    const engineMatch = content.match(/^\*\*Engine:\*\*\s*(.+)$/im);
+    if (engineMatch) {
+      extractionMethod = engineMatch[1].trim().replace(/^`|`$/g, '');
+    }
+  }
+
+  if (!source) {
+    const sourceUrlMatch = content.match(/^\*\*Source URL:\*\*\s*(.+)$/im);
+    const sourceFileMatch = content.match(/^\*\*Source File:\*\*\s*(.+)$/im);
+    const sourceMatch = content.match(/^\*\*Source:\*\*\s*(.+)$/im);
+    if (sourceUrlMatch) {
+      source = sourceUrlMatch[1].trim().replace(/^`|`$/g, '');
+    } else if (sourceFileMatch) {
+      source = sourceFileMatch[1].trim().replace(/^`|`$/g, '');
+    } else if (sourceMatch) {
+      source = sourceMatch[1].trim().replace(/^`|`$/g, '');
+    }
+  }
+
+  return { extractionMethod, source };
+}
 
 // ---- CodeMirror flash-highlight machinery ----------------------------------
 // `flashLineEffect` marks a target line; the StateField renders a line
@@ -286,7 +337,7 @@ interface EditorProps {
   note: NoteFile | null;
   allNotes: NoteFile[];
   vaultPath: string;
-  onSaveContent: (filePath: string, content: string) => void;
+  onSaveContent: (filePath: string, content: string) => Promise<void>;
   onWikiLinkClick: (targetTitle: string, blockId?: string) => void;
   scrollRequest?: { blockId?: string; line?: number; ts: number } | null;
   semanticRefreshToken?: number;
@@ -321,6 +372,12 @@ export const Editor: React.FC<EditorProps> = ({
   const [linkHubVisible, setLinkHubVisible] = useState(
     () => localStorage.getItem('cerebro_linkhub_visible') !== 'false'
   );
+  const [showNoteMeta, setShowNoteMeta] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
+  // Extraction metadata from the sidecar JSON the extractor writes into the
+  // vault's "note metadata" folder (`<name>.md.meta.json`). Kept out of the
+  // note body on purpose so it only ever surfaces in the Note Metadata modal.
+  const [sidecarMeta, setSidecarMeta] = useState<{ source: string | null; extractionMethod: string | null } | null>(null);
   const [formatSnapshot, setFormatSnapshot] = useState<string | null>(null);
   const [linkHubHeight, setLinkHubHeight] = useState(() => {
     const saved = Number(localStorage.getItem('cerebro_linkhub_height'));
@@ -345,6 +402,16 @@ export const Editor: React.FC<EditorProps> = ({
   const previewScrollTopRef = useRef(0);
   
   const timerRef = useRef<any>(null);
+  // Monotonic jump sequence: lets a stale jump's band-close timer detect it was
+  // superseded (user navigated to another match) and back off.
+  const jumpSeqRef = useRef(0);
+  // Line to re-snap to when the jump band closes. Consumed synchronously by a
+  // layout effect in the same frame as the windowed commit (before paint), so
+  // the estimate-vs-real drift correction is never visible.
+  const pendingSnapLineRef = useRef<number | null>(null);
+  // 30s idle debounce for space-optimized version history: records a delta
+  // snapshot when the user goes quiet, not on every 800ms autosave.
+  const idleHistoryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const cmContainerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -366,6 +433,11 @@ export const Editor: React.FC<EditorProps> = ({
   const [fullRender, setFullRender] = useState(false);
   // Target line (1-based) for the capped full-render band on huge notes.
   const [fullRenderAnchor, setFullRenderAnchor] = useState<number | null>(null);
+  // When the jump band closes, the windowed renderer must keep the band
+  // centered on the *target line*, not on scrollTop/28 (scrollTop is in real
+  // px, so estimate-vs-real drift would virtualize the subject out of the DOM
+  // and the correction would visibly jump). Cleared on user scroll.
+  const [windowAnchorLine, setWindowAnchorLine] = useState<number | null>(null);
   // Heavy paths are disabled for oversized notes (see LARGE_NOTE_CHARS).
   const isLargeNote = useMemo(
     () => (note?.content?.length ?? 0) > LARGE_NOTE_CHARS,
@@ -474,6 +546,9 @@ export const Editor: React.FC<EditorProps> = ({
       previewScrollTopRef.current = el.scrollTop;
       setPreviewScrollTop(el.scrollTop);
       setPreviewViewportHeight(el.clientHeight);
+      // Manual scrolling (or the snap's own scroll event) ends the anchored
+      // band; it follows the viewport again. No-op when already null.
+      setWindowAnchorLine(null);
     };
     update();
     el.addEventListener('scroll', update, { passive: true });
@@ -597,13 +672,22 @@ export const Editor: React.FC<EditorProps> = ({
   );
 
   // Visible suggestion counts (denied entries excluded) drive the Review badge.
+  // Suggestions pointing at notes outside the current vault (stale SQLite rows
+  // from another vault or deleted notes) are excluded so ghosts never count.
   const visibleSuggestions = useMemo(() => {
     const denied = new Set(deniedEntries.map(deniedEntryKey));
-    const m = pendingMentions.filter((x) => !denied.has(mentionKey(x))).length;
-    const r = relatedMatches.filter((x) => !denied.has(semanticKey(x))).length;
-    const b = blockMatches.filter((x) => !denied.has(blockKey(x))).length;
+    const known = new Set(allNotes.map((n) => n.path.toLowerCase()));
+    const m = pendingMentions.filter(
+      (x) => !denied.has(mentionKey(x)) && known.has(x.targetNoteId.toLowerCase())
+    ).length;
+    const r = relatedMatches.filter(
+      (x) => !denied.has(semanticKey(x)) && known.has(x.note_id.toLowerCase())
+    ).length;
+    const b = blockMatches.filter(
+      (x) => !denied.has(blockKey(x)) && known.has(x.note_id.toLowerCase())
+    ).length;
     return { mentions: m, related: r, blocks: b, total: m + r + b };
-  }, [deniedEntries, pendingMentions, relatedMatches, blockMatches]);
+  }, [deniedEntries, pendingMentions, relatedMatches, blockMatches, allNotes]);
 
   // Unified scan: keyword mentions + backlinks + semantic related notes.
   // Oversized notes skip the keyword scan (no multi-MB IPC payload) and the
@@ -814,6 +898,7 @@ export const Editor: React.FC<EditorProps> = ({
       onDone?.();
       return;
     }
+    const seq = ++jumpSeqRef.current;
     setFullRender(true);
     setFullRenderAnchor(lineNo);
     flashJumpStatus(`Scrolling to line ${lineNo}…`);
@@ -833,6 +918,8 @@ export const Editor: React.FC<EditorProps> = ({
       previewScrollTopRef.current = top;
       return true;
     };
+    // Windowed-layout re-snap happens in the useLayoutEffect below (same frame
+    // as the band close, before paint — never visible).
     // One frame later the full render has committed and every line element is
     // mounted — the element query can no longer miss.
     requestAnimationFrame(() => {
@@ -851,14 +938,44 @@ export const Editor: React.FC<EditorProps> = ({
       }
       onDone?.();
       setTimeout(() => {
+        // A newer jump superseded this one — leave the band up for it.
+        if (seq !== jumpSeqRef.current) return;
+        // Anchor the closing windowed band on the target line so its element
+        // stays mounted for the same-frame re-snap below.
+        setWindowAnchorLine(lineNo);
+        pendingSnapLineRef.current = lineNo;
         setFullRender(false);
         setFullRenderAnchor(null);
-        // Re-snap now that the band is closed: the windowed spacers estimate
-        // 28px/line, so the target's real coordinate has shifted.
-        requestAnimationFrame(snapToTarget);
       }, 2000);
     });
   }, []);
+
+  // Same-frame drift correction: when the jump band closes, the windowed
+  // spacers (28px/line estimates) replace the real content above the target,
+  // shifting its coordinate. Re-snap in a layout effect — React has committed
+  // the windowed DOM but the browser hasn't painted yet — so the correction is
+  // invisible (no "scrolls again 2s later" flicker).
+  useLayoutEffect(() => {
+    if (fullRender) return;
+    const lineNo = pendingSnapLineRef.current;
+    if (lineNo === null) return;
+    pendingSnapLineRef.current = null;
+    const el = previewRef.current;
+    if (!el || mode !== 'preview') return;
+    const target = el.querySelector(`[data-line="${lineNo - 1}"]`) as HTMLElement | null;
+    const max = Math.max(el.scrollHeight - el.clientHeight, 0);
+    if (target) {
+      const targetTop = target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      const top = Math.max(0, Math.min(targetTop - el.clientHeight / 3, max));
+      el.scrollTop = top;
+      previewScrollTopRef.current = top;
+    } else {
+      // Line virtualized out of the DOM: align with the spacer math.
+      const est = Math.max((lineNo - 1) * PREVIEW_LINE_HEIGHT - el.clientHeight / 3, 0);
+      el.scrollTop = Math.min(est, max);
+      previewScrollTopRef.current = el.scrollTop;
+    }
+  }, [fullRender, mode]);
 
   // Block-jump in preview mode: center the line, then flash-highlight it.
   const jumpPreview = useCallback(
@@ -963,8 +1080,15 @@ export const Editor: React.FC<EditorProps> = ({
 
   // ---- Find-in-note ---------------------------------------------------------
   // Ctrl/Cmd+F opens the search overlay (and focuses the input); Esc closes it.
+  // Ctrl/Cmd+S forces an explicit save and records a version-history snapshot.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        const path = noteRef.current?.path;
+        if (path) flushAndSnapshot(path, contentRef.current);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         setIsSearchOpen(true);
@@ -1232,14 +1356,36 @@ export const Editor: React.FC<EditorProps> = ({
     setFormatSnapshot(content);
     updateContent(formatted);
     onSaveContent(note.path, formatted);
+    tauriAPI.recordNoteVersion(note.path, formatted).catch(() => {});
   };
 
   const handleUndoFormat = () => {
     if (!note || formatSnapshot === null) return;
     updateContent(formatSnapshot);
     onSaveContent(note.path, formatSnapshot);
+    tauriAPI.recordNoteVersion(note.path, formatSnapshot).catch(() => {});
     setFormatSnapshot(null);
   };
+
+  // Space-optimized version history snapshot: flush any pending autosave for
+  // `path`, then record a delta. Called on explicit save (Ctrl/Cmd+S), note
+  // switch/unmount, formatter execution and the 30s idle debounce — never on
+  // the 800ms typing autosave (which would spam one delta per keystroke burst).
+  const flushAndSnapshot = useCallback((path: string, doc: string) => {
+    if (dirtyRef.current) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      dirtyRef.current = false;
+      setIsSaved(true);
+      saveRef.current(path, doc).then(() => {
+        tauriAPI.recordNoteVersion(path, doc).catch(() => {});
+      });
+    } else {
+      tauriAPI.recordNoteVersion(path, doc).catch(() => {});
+    }
+  }, []);
 
   // Sync content state when note changes. Deps are scoped to path + content:
   // runs on note switch and on lazy content arrival, but not on unrelated
@@ -1250,7 +1396,13 @@ export const Editor: React.FC<EditorProps> = ({
       // Reset the preview viewport + jump highlight when the note itself
       // changes (not on every content refresh of the same note).
       if (lastNotePathRef.current !== note.path) {
+        const prevPath = lastNotePathRef.current;
         lastNotePathRef.current = note.path;
+        // Leaving a note = a good moment to checkpoint its history. contentRef
+        // still holds the previous note's doc at this point (the new content
+        // is applied below), so flush + snapshot before switching.
+        if (prevPath) flushAndSnapshot(prevPath, contentRef.current);
+        setWindowAnchorLine(null);
         setPreviewScrollTop(0);
         previewScrollTopRef.current = 0;
         setPreviewHighlight(null);
@@ -1275,14 +1427,77 @@ export const Editor: React.FC<EditorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note?.path, note?.content]);
 
-  // Clean up timers
+    // Clean up timers
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (scanDebounceRef.current) clearTimeout(scanDebounceRef.current);
       if (keywordErrorTimerRef.current) clearTimeout(keywordErrorTimerRef.current);
+      if (idleHistoryTimerRef.current) clearTimeout(idleHistoryTimerRef.current);
+      // Editor unmount (app close / note deleted): flush a final save and
+      // checkpoint the version history of the note that was open.
+      const path = noteRef.current?.path;
+      if (path && dirtyRef.current) {
+        const doc = contentRef.current;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        dirtyRef.current = false;
+        saveRef.current(path, doc).then(() => {
+          tauriAPI.recordNoteVersion(path, doc).catch(() => {});
+        });
+      }
     };
   }, []);
+
+  // Close the metadata modal when switching notes and support Esc to dismiss.
+  useEffect(() => {
+    setShowNoteMeta(false);
+    setCopiedPath(false);
+  }, [note?.path]);
+
+  useEffect(() => {
+    if (!showNoteMeta) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowNoteMeta(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showNoteMeta]);
+
+  // Load the extractor's sidecar metadata (<vault>/note metadata/<name>.md.meta.json)
+  // when the modal opens. Non-existent sidecar (manual note) falls back to
+  // null; the modal then parses the note body / frontmatter as before.
+  useEffect(() => {
+    if (!showNoteMeta || !note) return;
+    let cancelled = false;
+    setSidecarMeta(null);
+    (async () => {
+      try {
+        const raw = await tauriAPI.readFile(sidecarPath(note.path));
+        if (cancelled) return;
+        const parsed = JSON.parse(raw);
+        setSidecarMeta({
+          source: typeof parsed.source === 'string' && parsed.source.trim() ? parsed.source.trim() : null,
+          extractionMethod:
+            typeof parsed.engine === 'string' && parsed.engine.trim() ? parsed.engine.trim() : null,
+        });
+      } catch {
+        if (!cancelled) setSidecarMeta(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showNoteMeta, note?.path]);
+
+// The extractor's sidecar metadata lives in a dedicated "<vault>/note metadata/"
+// folder (never next to the note body), mirrored per note as
+// "<note name>.md.meta.json".
+const sidecarPath = (notePath: string): string => {
+  const sep = notePath.includes('/') ? '/' : '\\';
+  const dir = notePath.slice(0, notePath.lastIndexOf(sep));
+  const name = notePath.slice(notePath.lastIndexOf(sep) + 1);
+  return `${dir}${sep}note metadata${sep}${name}.meta.json`;
+};
 
 // CodeMirror 6 editor: recreated per note. The updateListener feeds React
   // state + debounced autosave; programmatic syncs (updateContent) are skipped
@@ -1323,6 +1538,16 @@ export const Editor: React.FC<EditorProps> = ({
           const path = noteRef.current?.path;
           if (path) saveRef.current(path, doc);
         }, SAVE_DEBOUNCE_MS);
+
+        // 30s idle debounce: reset on every keystroke; when it fires, the
+        // note is checkpointed into the version history (a quiet moment is a
+        // natural "version" boundary).
+        if (idleHistoryTimerRef.current) clearTimeout(idleHistoryTimerRef.current);
+        idleHistoryTimerRef.current = setTimeout(() => {
+          idleHistoryTimerRef.current = null;
+          const path = noteRef.current?.path;
+          if (path) flushAndSnapshot(path, contentRef.current);
+        }, 30000);
 
         // Hidden local-keyword bookkeeping (skipped for oversized notes: a
         // per-keystroke full-doc regex is too costly on multi-MB files).
@@ -1816,6 +2041,13 @@ export const Editor: React.FC<EditorProps> = ({
           >
             <Undo2 className="w-3.5 h-3.5" /> Undo
           </button>
+          <button
+            onClick={() => setShowNoteMeta(true)}
+            title="View note metadata"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+          >
+            <Info className="w-3.5 h-3.5" /> Meta
+          </button>
           <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
             <button
               onClick={() => {
@@ -1867,8 +2099,17 @@ export const Editor: React.FC<EditorProps> = ({
                 let start: number;
                 let end: number;
                 if (windowed) {
-                  start = Math.max(0, Math.floor(previewScrollTop / PREVIEW_LINE_HEIGHT) - PREVIEW_BUFFER);
-                  end = Math.min(totalLines, Math.ceil((previewScrollTop + previewViewportHeight) / PREVIEW_LINE_HEIGHT) + PREVIEW_BUFFER);
+                  if (windowAnchorLine != null) {
+                    // Anchored band: keep the jump target's element mounted
+                    // right after the full-render band closes, regardless of
+                    // scrollTop's real-px coordinate (which would otherwise
+                    // virtualize the subject out of the DOM).
+                    start = Math.max(0, windowAnchorLine - PREVIEW_BUFFER);
+                    end = Math.min(totalLines, windowAnchorLine + PREVIEW_BUFFER + 1);
+                  } else {
+                    start = Math.max(0, Math.floor(previewScrollTop / PREVIEW_LINE_HEIGHT) - PREVIEW_BUFFER);
+                    end = Math.min(totalLines, Math.ceil((previewScrollTop + previewViewportHeight) / PREVIEW_LINE_HEIGHT) + PREVIEW_BUFFER);
+                  }
                 } else if (totalLines > MAX_FULL_RENDER_LINES && fullRenderAnchor != null) {
                   // Huge note during a jump: render a band around the target
                   // line instead of all ~100k lines. The target element is
@@ -1948,6 +2189,111 @@ export const Editor: React.FC<EditorProps> = ({
           Show Links
           <ChevronUp className="w-3 h-3" />
         </button>
+      )}
+
+      {/* Note Metadata Modal */}
+      {showNoteMeta && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowNoteMeta(false)}
+        >
+          <div
+            className="w-[440px] max-w-[92vw] bg-slate-950 border border-slate-800 rounded-xl shadow-2xl overflow-hidden select-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/80">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400 shrink-0">
+                  <Info className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-semibold text-slate-100 truncate">Note Metadata</h3>
+              </div>
+              <button
+                onClick={() => setShowNoteMeta(false)}
+                className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded-md transition-colors"
+                title="Close (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-4 py-3 space-y-2.5 text-xs max-h-[60vh] overflow-y-auto">
+              {(() => {
+                const bodyMeta = getNoteExtractionMetadata(content);
+                const extractionMethod = sidecarMeta?.extractionMethod ?? bodyMeta.extractionMethod;
+                const source = sidecarMeta?.source ?? bodyMeta.source;
+                const rows = [
+                  { label: 'Title', value: note.title },
+                  { label: 'File name', value: note.name },
+                  { label: 'Relative path', value: note.relativePath || note.path },
+                  { label: 'Modified', value: formattedDate() },
+                ];
+                if (extractionMethod) rows.push({ label: 'Extraction method', value: extractionMethod });
+                else rows.push({ label: 'Extraction method', value: '—' });
+                if (source) rows.push({ label: 'Source', value: source });
+                else rows.push({ label: 'Source', value: '—' });
+                rows.push(
+                  { label: 'Lines', value: lines.length.toLocaleString() },
+                  {
+                    label: 'Words',
+                    value: (content ? content.trim().split(/\s+/).filter(Boolean).length : 0).toLocaleString(),
+                  },
+                  { label: 'Characters', value: content.length.toLocaleString() },
+                  { label: 'Outbound links', value: outboundLinks.length.toLocaleString() },
+                  { label: 'Backlinks', value: incomingBacklinks.length.toLocaleString() },
+                  { label: 'Keywords', value: localKeywords.length.toLocaleString() }
+                );
+                return rows;
+              })().map((row) => (
+                <div key={row.label} className="flex items-start justify-between gap-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 shrink-0 pt-0.5">
+                    {row.label}
+                  </span>
+                  <span className="text-slate-200 text-right break-all min-w-0">
+                    {row.label === 'Source' &&
+                    (row.value.startsWith('http://') || row.value.startsWith('https://')) ? (
+                      <a
+                        href={row.value}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-orange-400 hover:underline"
+                      >
+                        {row.value}
+                      </a>
+                    ) : (
+                      row.value
+                    )}
+                  </span>
+                </div>
+              ))}
+
+              {/* Full path with copy button */}
+              <div className="flex items-center gap-2 pt-1.5 border-t border-slate-800/60">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 shrink-0">
+                  Full path
+                </span>
+                <span className="text-slate-200 text-right break-all font-mono text-[10px] leading-relaxed min-w-0 flex-1">
+                  {note.path}
+                </span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard
+                      .writeText(note.path)
+                      .then(() => {
+                        setCopiedPath(true);
+                        setTimeout(() => setCopiedPath(false), 1500);
+                      })
+                      .catch(() => {});
+                  }}
+                  title="Copy full path"
+                  className="p-1 rounded-md text-slate-500 hover:text-orange-400 hover:bg-slate-800 transition-colors shrink-0"
+                >
+                  {copiedPath ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

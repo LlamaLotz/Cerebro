@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { 
   FolderOpen, Plus, Search, FileText, Trash2, Edit3, 
-  RefreshCw, Terminal, Settings, ChevronRight, Play, PanelLeftClose 
+  RefreshCw, Terminal, Settings, ChevronRight, Play, PanelLeftClose,
+  ArrowUp, ArrowDown, TerminalSquare
 } from 'lucide-react';
 import { NoteFile, tauriAPI } from '../types';
+import { useIngestion } from '../services/ingestionStore';
 
 interface SidebarProps {
   notes: NoteFile[];
@@ -12,6 +14,7 @@ interface SidebarProps {
   onNewNote: () => void;
   onDeleteNote: (note: NoteFile) => void;
   onRenameNote: (note: NoteFile) => void;
+  onMoveNote: (note: NoteFile, direction: 'up' | 'down') => void;
   vaultPath: string;
   onSelectVault: () => void;
   onRefresh: () => void;
@@ -28,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewNote,
   onDeleteNote,
   onRenameNote,
+  onMoveNote,
   vaultPath,
   onSelectVault,
   onRefresh,
@@ -37,6 +41,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollapse,
 }) => {
   const [search, setSearch] = useState('');
+  const { isMinimized, setMinimized, isHidden, setHidden, progress } = useIngestion();
+
+  // Toggle the log window: hidden → open expanded; minimized (badge) → expand;
+  // fully expanded → vanish.
+  const toggleLogs = () => {
+    if (isHidden) {
+      setHidden(false);
+      setMinimized(false);
+    } else if (isMinimized) {
+      setMinimized(false);
+    } else {
+      setHidden(true);
+    }
+  };
 
   const filteredNotes = useMemo(() =>
     notes.filter((note) =>
@@ -118,6 +136,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <RefreshCw className="w-4 h-4" />
             </button>
             <button
+              onClick={toggleLogs}
+              className="flex-1 bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-orange-400 border border-slate-800/80 rounded p-1.5 flex items-center justify-center transition-colors relative"
+              title="Open / close ingestion logs"
+            >
+              <TerminalSquare className="w-4 h-4" />
+              {/* Status dot mirrors the logs window's progress-bar color:
+                  emerald = completed, rose = error, orange = ingesting, slate = idle */}
+              <span
+                className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-950 ${
+                  progress.status === 'completed'
+                    ? 'bg-emerald-400'
+                    : progress.status === 'error'
+                      ? 'bg-rose-400'
+                      : progress.status === 'ingesting'
+                        ? 'bg-orange-400 animate-pulse'
+                        : 'bg-slate-500'
+                }`}
+              />
+            </button>
+            <button
               onClick={onRunIngest}
               disabled={isIngesting}
               className="flex-1 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-800/40 text-white border border-orange-500/30 rounded p-1.5 flex items-center justify-center transition-colors shadow-sm shadow-orange-600/10"
@@ -184,7 +222,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 
                 {/* Note Hover Actions */}
-                <div className="hidden group-hover:flex items-center gap-1.5 shrink-0 animate-in fade-in duration-100">
+                <div className="flex items-center gap-1.5 shrink-0 opacity-50 hover:opacity-100 transition-opacity">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

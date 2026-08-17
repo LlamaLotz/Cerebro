@@ -1,4 +1,4 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { tauriAPI } from '../types';
 
@@ -20,10 +20,12 @@ interface IngestionContextValue {
   logs: LogEntry[];
   progress: IngestionProgress;
   isMinimized: boolean;
+  isHidden: boolean;
   addLog: (entry: Omit<LogEntry, 'id' | 'timestamp'>) => void;
   clearLogs: () => void;
   updateProgress: (patch: Partial<IngestionProgress>) => void;
   setMinimized: (minimized: boolean) => void;
+  setHidden: (hidden: boolean) => void;
 }
 
 const IngestionContext = createContext<IngestionContextValue | null>(null);
@@ -69,6 +71,10 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
     status: 'idle',
   });
   const [isMinimized, setIsMinimized] = useState(true);
+  // Completely hidden (closed) — distinct from minimized, which still shows
+  // the compact floating status badge. Toggled by the sidebar "Logs" button.
+  const [isHidden, setIsHidden] = useState(true);
+  const hasLogsRef = useRef(false);
 
   const addLog = useCallback((entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
     const full: LogEntry = {
@@ -76,6 +82,13 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
       id: makeId(),
       timestamp: formatTimestamp(),
     };
+    // First activity of a run: surface the panel (collapsed to the badge) so
+    // the user notices extraction is underway, even if it was closed.
+    if (!hasLogsRef.current) {
+      hasLogsRef.current = true;
+      setIsHidden(false);
+      setIsMinimized(true);
+    }
     setLogs((prev) => [...prev, full]);
     // Persist warnings/errors to disk for troubleshooting (~/.cerebro/ingestion.log)
     if (entry.level === 'error' || entry.level === 'warn') {
@@ -84,6 +97,7 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
   }, []);
 
   const clearLogs = useCallback(() => {
+    hasLogsRef.current = false;
     setLogs([]);
     setProgress({ current: 0, total: 0, currentFileName: '', status: 'idle' });
   }, []);
@@ -142,12 +156,14 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
       logs,
       progress,
       isMinimized,
+      isHidden,
       addLog,
       clearLogs,
       updateProgress,
       setMinimized: setIsMinimized,
+      setHidden: setIsHidden,
     }),
-    [logs, progress, isMinimized, addLog, clearLogs, updateProgress]
+    [logs, progress, isMinimized, isHidden, addLog, clearLogs, updateProgress]
   );
 
   return createElement(IngestionContext.Provider, { value }, children);

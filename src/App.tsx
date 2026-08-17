@@ -16,6 +16,7 @@ import { backfillEmbeddings, generateAndStoreEmbedding, generateAndStoreBlockEmb
 import { appLogger } from './services/appLogger';
 import { formatNote, noteTitleMatches } from './utils/formatter';
 import { ResizeHandle } from './components/ResizeHandle';
+import { ContextMenu } from './components/ContextMenu';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'cerebro_app_settings';
@@ -96,6 +97,10 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem('cerebro_sidebar_collapsed') === 'true'
   );
+
+  // Custom dark context menu position (null = hidden). The default
+  // WebView2/Edge right-click menu is disabled app-wide; see the effect below.
+  const [ctxMenuPos, setCtxMenuPos] = useState<{ x: number; y: number } | null>(null);
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
@@ -194,6 +199,33 @@ export default function App() {
     }, 1000);
   }, [activeNote, notes]);
 
+  // Disable the default browser/WebView2 right-click menu app-wide and show
+  // the custom dark context menu in its place.
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault(); // Disables Edge / WKWebView default right-click menu
+      setCtxMenuPos({ x: e.clientX, y: e.clientY });
+    };
+    const closeMenu = () => setCtxMenuPos(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeMenu();
+    };
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', closeMenu);
+    return () => {
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', closeMenu);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       if (graphDebounceRef.current) clearTimeout(graphDebounceRef.current);
@@ -239,6 +271,28 @@ export default function App() {
       const files = await tauriAPI.indexVault(path);
       // Sort notes alphabetically by title
       const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
+      
+      // Apply custom order if it exists, otherwise alphabetical
+      const savedOrderRaw = localStorage.getItem(`cerebro_order_${path}`);
+      let finalNotes: NoteFile[] = sorted;
+      if (savedOrderRaw) {
+        try {
+          const savedOrder: string[] = JSON.parse(savedOrderRaw);
+          const orderedNotes: NoteFile[] = [];
+          const remainingNotes = [...sorted];
+          for (const p of savedOrder) {
+            const idx = remainingNotes.findIndex(n => n.path === p);
+            if (idx !== -1) {
+              orderedNotes.push(remainingNotes[idx]);
+              remainingNotes.splice(idx, 1);
+            }
+          }
+          finalNotes = [...orderedNotes, ...remainingNotes];
+        } catch (e) {
+          finalNotes = sorted;
+        }
+      }
+      
       appLogger.info(`Vault indexed: ${sorted.length} notes (${path})`);
 
       // Startup sync: if a note's H1 doesn't match its filename (e.g. it was
@@ -262,7 +316,7 @@ export default function App() {
         }
       }
 
-      setNotes(sorted);
+      setNotes(finalNotes);
       // The SQLite index is fully populated by `index_vault` above, so the
       // backfill can query it immediately.
       if (!backfillRanRef.current) {
@@ -537,11 +591,45 @@ export default function App() {
         }
       }
       await fetchNotes();
+      // Keep the note's position in the persisted custom order (the path
+      // changed, so swap the old path for the new one).
+      const orderKey = `cerebro_order_${settings.vaultPath}`;
+      const orderRaw = localStorage.getItem(orderKey);
+      if (orderRaw) {
+        try {
+          const order: string[] = JSON.parse(orderRaw);
+          const idx = order.findIndex((p) => p === note.path);
+          if (idx !== -1) {
+            order[idx] = newPath;
+            localStorage.setItem(orderKey, JSON.stringify(order));
+          }
+        } catch (e) {
+          // ignore malformed order
+        }
+      }
       appLogger.info(`Note renamed: ${note.title} -> ${formattedNewTitle} (${newPath})`);
     } else {
       alert(`Error renaming note: ${result.error}`);
       appLogger.error(`Failed to rename note: ${note.title}`, new Error(result.error));
     }
+  };
+
+  // 10. Reorder note file
+  const handleMoveNote = async (note: NoteFile, direction: 'up' | 'down') => {
+    const currentIndex = notes.findIndex((n) => n.path === note.path);
+    if (currentIndex === -1) return;
+    
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex < 0 || newIndex >= notes.length) return;
+
+    const newNotes = [...notes];
+    const temp = newNotes[currentIndex];
+    newNotes[currentIndex] = newNotes[newIndex];
+    newNotes[newIndex] = temp;
+
+    setNotes(newNotes);
+    // Persist order
+    localStorage.setItem(`cerebro_order_${settings.vaultPath}`, JSON.stringify(newNotes.map(n => n.path)));
   };
 
   // Plain note selection (sidebar/new/delete): never a block jump, so clear
@@ -641,6 +729,7 @@ export default function App() {
             onNewNote={handleNewNote}
             onDeleteNote={handleDeleteNote}
             onRenameNote={handleRenameNote}
+            onMoveNote={handleMoveNote}
             vaultPath={settings.vaultPath}
             onSelectVault={handleSelectVault}
             onRefresh={() => fetchNotes()}
@@ -668,7 +757,7 @@ export default function App() {
                className={`p-2 rounded-md transition-all ${
                  layout === 'editor'
                    ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200'
+                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
                }`}
                title="Note Editor"
              >
@@ -679,7 +768,7 @@ export default function App() {
                className={`p-2 rounded-md transition-all ${
                  layout === 'split'
                    ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200'
+                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
                }`}
                title="Split View"
              >
@@ -690,7 +779,7 @@ export default function App() {
                className={`p-2 rounded-md transition-all ${
                  layout === 'graph'
                    ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200'
+                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
                }`}
                title="Graph Network"
              >
@@ -701,7 +790,7 @@ export default function App() {
                className={`p-2 rounded-md transition-all ${
                  layout === 'topics'
                    ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200'
+                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
                }`}
                title="Topic Groups (@tags)"
              >
@@ -790,6 +879,11 @@ export default function App() {
 
       {/* Persistent, reopenable ingestion log (minimizable badge + drawer) */}
       <IngestionLogPanel />
+
+      {/* Custom dark context menu (replaces the WebView2 default) */}
+      {ctxMenuPos && (
+        <ContextMenu x={ctxMenuPos.x} y={ctxMenuPos.y} onClose={() => setCtxMenuPos(null)} />
+      )}
 
     </div>
   );

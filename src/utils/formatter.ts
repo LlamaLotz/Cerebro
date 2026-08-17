@@ -5,6 +5,181 @@
 
 import { extractKeywordTokens, stripKeywordTokens } from './keywords';
 
+/**
+ * Clean formatting utility function:
+ * 1. Heading Normalization:
+ *    - Standardizes headings to `# Heading 1`, `## Heading 2`, etc.
+ *    - Strips duplicate `#` symbols (e.g. `## # Title` -> `## Title`).
+ *    - Ensures exactly one space exists between `#` hashes and heading text.
+ * 2. Character & OCR Cleanup:
+ *    - Removes unprintable ASCII control characters, replacement characters
+ *      (\uFFFD), zero-width spaces (\u200B) and BOM (\uFEFF).
+ *    - Fixes broken quote marks and normalizes tab characters to 2 spaces.
+ * 3. Junk Line Removal:
+ *    - Drops InDesign/publication margin headers (`.indd` identifiers,
+ *      standalone page numbers, dates) and garbled diacritic-symbol rows.
+ * 4. Smart Line Joining (PDF/OCR repair):
+ *    - Adjacent plain-text lines that don't end with sentence punctuation
+ *      (. ! ? : ;) and whose next line starts with lowercase (and isn't a
+ *      markdown element) are joined with a single space.
+ * 5. Whitespace Normalization:
+ *    - Trims trailing spaces from line ends.
+ *    - Collapses 3 or more consecutive blank lines down to a clean double newline (\n\n).
+ */
+
+/** True when a line is publication layout junk that repeats on every page of
+ *  an InDesign/PDF export (page numbers, dates, .indd ids, diacritic rows). */
+function isJunkLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (t.includes('.indd') || t.includes('InDesign')) return true;
+  if (/^(?:p(?:age|g)?\.?\s*|[-–—]\s*)?\d{1,4}(?:\s*[-–—])?(?:\s+of\s+\d{1,4})?$/i.test(t)) return true;
+  if (
+    /^(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{2,4}|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{4})$/i.test(t)
+  ) {
+    return true;
+  }
+  const hasAscii = /[A-Za-z0-9]/.test(t);
+  if (!hasAscii && /[^\x00-\x7F]/.test(t)) return true;
+  return false;
+}
+
+/** True when a line starts a markdown element that must never be joined into
+ *  the previous paragraph (headings, lists, quotes, tables, rules, code). */
+function isMarkdownLine(line: string): boolean {
+  const t = line.trimStart();
+  return (
+    t.startsWith('#') ||
+    t.startsWith('```') ||
+    t.startsWith('`') ||
+    t.startsWith('- ') ||
+    t.startsWith('* ') ||
+    t.startsWith('+ ') ||
+    t.startsWith('>') ||
+    t.startsWith('|') ||
+    t.startsWith('---') ||
+    t.startsWith('***') ||
+    t.startsWith('___') ||
+    /^\d/.test(t) ||
+    t.startsWith('![')
+  );
+}
+
+export function formatNoteContent(rawText: string): string {
+  if (!rawText) return '';
+
+  // 1. Character & OCR Cleanup
+  let cleaned = rawText.replace(/\t/g, '  ');
+
+  // Remove unprintable ASCII control characters [\x00-\x08\x0B\x0C\x0E-\x1F],
+  // replacement characters \uFFFD, zero-width spaces \u200B and BOM \uFEFF
+  cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD\u200B\uFEFF]/g, '');
+
+  // Fix broken quote marks
+  cleaned = cleaned
+    .replace(/[“”„‟«»]/g, '"')
+    .replace(/[‘’‚‛]/g, "'");
+
+  // 2. Heading Normalization (preserving code fences)
+  const lines = cleaned.split('\n');
+  const processedLines: string[] = [];
+  let inCodeFence = false;
+
+  for (const line of lines) {
+    const trimmedEnd = line.trimEnd();
+
+    if (trimmedEnd.trimStart().startsWith('```')) {
+      inCodeFence = !inCodeFence;
+      processedLines.push(trimmedEnd);
+      continue;
+    }
+
+    if (inCodeFence) {
+      processedLines.push(trimmedEnd);
+      continue;
+    }
+
+    const trimmedStart = trimmedEnd.trimStart();
+    const leadingSpacesCount = trimmedEnd.length - trimmedStart.length;
+
+    if (trimmedStart.startsWith('#') && leadingSpacesCount < 4) {
+      const match = trimmedStart.match(/^(#{1,6})(?:\s*#+)*\s*(.*)$/);
+      if (match) {
+        const hashes = match[1];
+        const text = match[2].trim();
+          processedLines.push(text ? `${hashes} ${text}` : hashes);
+      } else {
+        processedLines.push(trimmedEnd);
+      }
+    } else {
+      processedLines.push(trimmedEnd);
+    }
+  }
+
+  // 3. Junk line removal: page numbers, dates, .indd ids, diacritic rows
+  const junkFiltered = processedLines.filter((l) => !isJunkLine(l));
+
+  // 4. Smart Line Joining (PDF/OCR repair)
+  const joined: string[] = [];
+  let inFence = false;
+  for (const line of junkFiltered) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      joined.push(line);
+      continue;
+    }
+    if (inFence) {
+      joined.push(line);
+      continue;
+    }
+    const prev = joined[joined.length - 1];
+    const canJoin =
+      prev !== undefined &&
+      prev !== '' &&
+      !isMarkdownLine(prev) &&
+      !isMarkdownLine(line) &&
+      !/[.!?:;]$/.test(prev.trimEnd()) &&
+      /^[a-z]/.test(line.trimStart());
+    if (canJoin) {
+      joined[joined.length - 1] = `${prev.trimEnd()} ${line.trimStart()}`;
+    } else {
+      joined.push(line);
+    }
+  }
+
+  // 5. Whitespace Normalization
+  const finalLines: string[] = [];
+  let i = 0;
+  while (i < joined.length) {
+    if (joined[i] === '') {
+      let j = i;
+      while (j < joined.length && joined[j] === '') {
+        j++;
+      }
+      const count = j - i;
+      if (count >= 3) {
+        finalLines.push('');
+      } else {
+        for (let k = 0; k < count; k++) {
+          finalLines.push('');
+        }
+      }
+      i = j;
+    } else {
+      finalLines.push(joined[i]);
+      i++;
+    }
+  }
+
+  let result = finalLines.join('\n');
+  if (result.length > 0 && rawText.endsWith('\n')) {
+    result += '\n';
+  }
+  return result;
+}
+
+export const format_note_content = formatNoteContent;
+
 function splitFrontmatter(content: string): { frontmatter: string; body: string } {
   const fm = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
   if (!fm) return { frontmatter: '', body: content };
@@ -12,7 +187,10 @@ function splitFrontmatter(content: string): { frontmatter: string; body: string 
 }
 
 function normalizeHeadingPrefix(line: string): string {
-  const m = line.match(/^(#{1,6})(\S.*)$/);
+  // Safety net: `#foo` -> `# foo`. The (?<!#) lookbehind stops the hash run
+  // from backtracking, so correctly-spaced headings like `### Header` (whose
+  // content starts with `#`) are never mangled into `## # Header`.
+  const m = line.match(/^(#{1,6})(?<!#)(\S.*)$/);
   return m ? `${m[1]} ${m[2]}` : line;
 }
 
@@ -32,7 +210,11 @@ export function formatNote(content: string, title: string): string {
   // formatted first line so the H1 sync never strips or scatters them.
   const keywordTokens = extractKeywordTokens(body);
 
-  let lines = body
+  // Run the full cleaner first (junk line removal, smart joining, invisible
+  // character stripping) so the one-click Format repairs PDF/OCR noise too.
+  const cleanedBody = formatNoteContent(body);
+
+  let lines = cleanedBody
     .split('\n')
     .map(stripKeywordTokens)
     .map(normalizeHeadingPrefix)
@@ -44,7 +226,7 @@ export function formatNote(content: string, title: string): string {
   const titleLower = title.trim().toLowerCase();
   const out: string[] = [];
 
-  // Title H1 always first
+  // Title H1 always first (`# Title` — space after the final #)
   if (title.trim()) out.push(`# ${title.trim()}`);
 
   let titleSeen = false;
@@ -58,7 +240,7 @@ export function formatNote(content: string, title: string): string {
       return;
     }
     // Blank line before any heading (but not at the very start)
-    if (/^#{1,6}\s/.test(line) && out.length > 0 && out[out.length - 1].trim() !== '') {
+    if (/^#{1,6}/.test(line) && out.length > 0 && out[out.length - 1].trim() !== '') {
       out.push('');
     }
     if (line.trim() === '') {
@@ -74,13 +256,21 @@ export function formatNote(content: string, title: string): string {
       push(line);
       continue;
     }
-    if (/^#\s/.test(line)) {
-      const text = line.replace(/^#\s+/, '').trim();
-      if (!titleSeen && text.toLowerCase() === titleLower) {
-        titleSeen = true;
-        continue; // title already placed at the top
+    if (/^#/.test(line)) {
+      const hashRun = line.match(/^#{1,6}/)![0].length;
+      if (hashRun === 1) {
+        // H1: skip it when it matches the title (already placed at the top),
+        // otherwise demote to `## Text` (space after the final #).
+        const text = line.replace(/^#/, '').trim();
+        if (!titleSeen && text.toLowerCase() === titleLower) {
+          titleSeen = true;
+          continue;
+        }
+        push(text ? `## ${text}` : '##');
+      } else {
+        // H2+ headings pass through untouched (already `## Text` form).
+        push(line);
       }
-      push(`## ${text}`);
       continue;
     }
     push(line);
@@ -105,6 +295,6 @@ export function formatNote(content: string, title: string): string {
  *  Hidden `---keyword---` tokens are ignored so they don't mask the H1. */
 export function noteTitleMatches(content: string, title: string): boolean {
   const scrubbed = content.split('\n').map(stripKeywordTokens).join('\n');
-  const m = scrubbed.match(/^#{1,6}\s+(.+?)\s*$/m);
+  const m = scrubbed.match(/^#{1,6}\s*(.+?)\s*$/m);
   return !!m && m[1].trim().toLowerCase() === title.trim().toLowerCase();
 }

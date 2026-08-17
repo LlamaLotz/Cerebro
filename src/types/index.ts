@@ -81,6 +81,12 @@ export const tauriAPI = {
   readFile: async (filePath: string): Promise<string> => {
     return await invoke<string>('read_file', { filePath });
   },
+  // Space-optimized delta version history: records a snapshot only when the
+  // frontend explicitly asks (explicit save, note switch/unmount, formatter
+  // run, 30s idle debounce) — never per autosave.
+  recordNoteVersion: async (notePath: string, content: string): Promise<number | null> => {
+    return await invoke<number | null>('record_note_version', { notePath, content });
+  },
   writeFile: async (data: { filePath: string; content: string }): Promise<{ success: boolean; error?: string }> => {
     try {
       await invoke('write_file', { filePath: data.filePath, content: data.content });

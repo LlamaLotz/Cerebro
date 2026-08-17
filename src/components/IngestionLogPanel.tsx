@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   TerminalSquare,
   X,
@@ -9,6 +9,10 @@ import {
 import { useIngestion, LogEntry, IngestionProgress } from '../services/ingestionStore';
 
 type FilterLevel = 'all' | LogEntry['level'];
+
+// Default expanded-window size (matches the previous fixed drawer).
+const PANEL_W = 640;
+const PANEL_H = 500;
 
 const LEVEL_STYLES: Record<LogEntry['level'], { dot: string; label: string }> = {
   info: { dot: 'bg-sky-400', label: 'text-sky-400' },
@@ -34,12 +38,126 @@ const FILTERS: { value: FilterLevel; label: string }[] = [
 ];
 
 export const IngestionLogPanel: React.FC = () => {
-  const { logs, progress, isMinimized, setMinimized, clearLogs } = useIngestion();
+  const { logs, progress, isMinimized, setMinimized, isHidden, setHidden, clearLogs } = useIngestion();
   const [filter, setFilter] = useState<FilterLevel>('all');
   const listRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
 
-  const hasActivity = logs.length > 0 || progress.status !== 'idle';
+  // Floating-window behavior: the log window floats freely. Both the
+  // collapsed badge and the expanded window share one position (persisted).
+  const POS_KEY = 'cerebro_log_position';
+  const loadPos = (): { x: number; y: number } | null => {
+    try {
+      const saved = localStorage.getItem(POS_KEY);
+      if (!saved) return null;
+      const p = JSON.parse(saved);
+      return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+    } catch {
+      return null;
+    }
+  };
+  const [pos, setPosState] = useState<{ x: number; y: number } | null>(loadPos);
+  const setPos = (p: { x: number; y: number }) => {
+    setPosState(p);
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(p));
+    } catch {
+      // Storage unavailable — the in-memory position still applies.
+    }
+  };
+
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+    moved: boolean;
+    el: HTMLElement;
+  } | null>(null);
+  // Set after a real drag so the badge's click-to-expand doesn't fire on the
+  // click that ends a drag; cleared immediately after that click processes.
+  const justDraggedRef = useRef(false);
+
+  // Free dragging: the element follows the pointer exactly (delta from the
+  // grab point) and keeps the position on release, clamped so the window can
+  // never be dragged fully off-screen. Move/up are tracked on window (not via
+  // pointer capture on the element), so the drag can never be lost when the
+  // pointer leaves the element.
+  const makeDragHandlers = (getEl: () => HTMLElement | null) => {
+    const winMove = (ev: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (!drag.el.isConnected) return;
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) > 3) drag.moved = true;
+      // Clamp while dragging so the window can never go outside the app
+      // window — not even temporarily mid-drag.
+      const left = Math.max(0, Math.min(window.innerWidth - drag.el.offsetWidth, drag.startLeft + dx));
+      const top = Math.max(0, Math.min(window.innerHeight - drag.el.offsetHeight, drag.startTop + dy));
+      drag.el.style.left = `${left}px`;
+      drag.el.style.top = `${top}px`;
+    };
+    const winEnd = (ev: PointerEvent) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      window.removeEventListener('pointermove', winMove);
+      window.removeEventListener('pointerup', winEnd);
+      window.removeEventListener('pointercancel', winEnd);
+      if (!drag || !drag.el.isConnected) return;
+      if (drag.moved) {
+        justDraggedRef.current = true;
+        // The click that closes a drag dispatches right after this event.
+        setTimeout(() => {
+          justDraggedRef.current = false;
+        }, 0);
+      }
+      // Commit the final position, clamped to the viewport.
+      const w = drag.el.offsetWidth;
+      const h = drag.el.offsetHeight;
+      setPos({
+        x: Math.max(0, Math.min(window.innerWidth - w, drag.startLeft + (ev.clientX - drag.startX))),
+        y: Math.max(0, Math.min(window.innerHeight - h, drag.startTop + (ev.clientY - drag.startY))),
+      });
+    };
+    return {
+      onPointerDown: (e: React.PointerEvent) => {
+        if (e.button !== 0) return;
+        const el = getEl();
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        dragRef.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          startLeft: rect.left,
+          startTop: rect.top,
+          moved: false,
+          el,
+        };
+        window.addEventListener('pointermove', winMove);
+        window.addEventListener('pointerup', winEnd);
+        window.addEventListener('pointercancel', winEnd);
+      },
+    };
+  };
+
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelHandlers = makeDragHandlers(() => panelRef.current);
+
+  const badgeRef = useRef<HTMLButtonElement | null>(null);
+  const [badgeSize, setBadgeSize] = useState<{ w: number; h: number } | null>(null);
+  // Measure the badge so it sits flush in the corner regardless of its content
+  // width (percent, file name, log count).
+  useLayoutEffect(() => {
+    if (!isMinimized || isHidden) return;
+    const el = badgeRef.current;
+    if (!el) return;
+    const update = () => setBadgeSize({ w: el.offsetWidth, h: el.offsetHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isMinimized, isHidden]);
 
   const filteredLogs = useMemo(
     () => (filter === 'all' ? logs : logs.filter((l) => l.level === filter)),
@@ -77,15 +195,30 @@ export const IngestionLogPanel: React.FC = () => {
 
   const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
-  if (!hasActivity) return null;
+  // Hidden (X): nothing to render. The sidebar Logs button and the first
+  // ingestion log both reveal the panel (setHidden(false)).
+  if (isHidden) return null;
 
-  // Minimized: floating status badge, persistent across all views
+  // Minimized: floating status badge (free-draggable like the expanded
+  // window), persistent across all views
   if (isMinimized) {
+    const badgeHandlers = makeDragHandlers(() => badgeRef.current);
+    const bw = badgeSize?.w ?? 0;
+    const bh = badgeSize?.h ?? 0;
     return (
       <button
-        onClick={() => setMinimized(false)}
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2.5 pl-3 pr-3.5 py-2 rounded-xl bg-slate-950/95 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur hover:border-orange-500/40 transition-colors group"
-        title="Open ingestion log"
+        ref={badgeRef}
+        onPointerDown={badgeHandlers.onPointerDown}
+        onClick={() => {
+          if (justDraggedRef.current) return;
+          setMinimized(false);
+        }}
+        className="fixed z-50 flex items-center gap-2.5 pl-3 pr-3.5 py-2 rounded-xl bg-slate-950/95 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur hover:border-orange-500/40 transition-colors group cursor-grab active:cursor-grabbing touch-none select-none"
+        style={{
+          left: pos ? Math.min(pos.x, window.innerWidth - bw) : window.innerWidth - bw - 16,
+          top: pos ? Math.min(pos.y, window.innerHeight - bh) : window.innerHeight - bh - 16,
+        }}
+        title="Open ingestion log (drag to move)"
       >
         <span className={`w-2 h-2 rounded-full shrink-0 ${statusMeta.dot}`} />
         <span className="text-[11px] font-bold text-slate-200 uppercase tracking-wider">
@@ -102,15 +235,40 @@ export const IngestionLogPanel: React.FC = () => {
         <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 group-hover:text-orange-400 transition-colors">
           <TerminalSquare className="w-3.5 h-3.5" /> Logs ({logs.length})
         </span>
+        <span
+          onClick={(e) => {
+            e.stopPropagation();
+            setHidden(true);
+          }}
+          className="p-0.5 rounded-md text-slate-600 hover:text-red-400 hover:bg-slate-800 transition-colors"
+          title="Close (hide window)"
+        >
+          <X className="w-3 h-3" />
+        </span>
       </button>
     );
   }
 
-  // Expanded: fixed-size slide-over drawer
+  // Expanded: free-draggable floating window
   return (
-    <div className="ingestion-drawer fixed bottom-4 right-4 z-50 flex flex-col w-[640px] max-w-[calc(100vw-2rem)] h-[500px] max-h-[calc(100vh-2rem)] rounded-xl border border-slate-800 bg-slate-950/95 backdrop-blur shadow-2xl shadow-black/60 overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-900 bg-slate-950/80 flex items-center justify-between">
+    <div
+      ref={panelRef}
+      className="ingestion-drawer fixed z-50 flex flex-col rounded-xl border border-slate-800 bg-slate-950/95 backdrop-blur shadow-2xl shadow-black/60 overflow-hidden"
+      style={{
+        width: PANEL_W,
+        maxWidth: 'calc(100vw - 1rem)',
+        height: PANEL_H,
+        maxHeight: 'calc(100vh - 1rem)',
+        left: pos ? Math.min(pos.x, window.innerWidth - PANEL_W) : window.innerWidth - PANEL_W - 16,
+        top: pos ? Math.min(pos.y, window.innerHeight - PANEL_H) : window.innerHeight - PANEL_H - 16,
+      }}
+    >
+      {/* Header: drag handle + window controls */}
+      <div
+        className="shrink-0 px-4 py-3 border-b border-slate-900 bg-slate-950/80 flex items-center justify-between cursor-grab active:cursor-grabbing touch-none select-none"
+        onPointerDown={panelHandlers.onPointerDown}
+        title="Drag to move"
+      >
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 rounded-md bg-orange-500/10 border border-orange-500/20 text-orange-400">
             <TerminalSquare className="w-4 h-4" />
@@ -130,7 +288,7 @@ export const IngestionLogPanel: React.FC = () => {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
           <button
             onClick={clearLogs}
             className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition-colors"
@@ -141,14 +299,14 @@ export const IngestionLogPanel: React.FC = () => {
           <button
             onClick={() => setMinimized(true)}
             className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition-colors"
-            title="Minimize"
+            title="Minimize / collapse"
           >
             <Minimize2 className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={() => setMinimized(true)}
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition-colors"
-            title="Close"
+            onClick={() => setHidden(true)}
+            className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-slate-900 transition-colors"
+            title="Close (hide window)"
           >
             <X className="w-3.5 h-3.5" />
           </button>

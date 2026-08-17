@@ -690,14 +690,21 @@ def process_youtube_url(video_url: str, item_raw_folder: Path, main_extractions_
 
     sanitized_title = sanitize_filename(video_title)
     master_out_file = main_extractions_folder / f"{sanitized_title}.md"
-    safe_write_file(master_out_file, 
+    safe_write_file(master_out_file,
         f"# {video_title}\n\n"
-        f"**Source URL:** {video_url}\n\n"
-        f"--- \n\n"
-        f"**Selected Service:** `{winner_name}`\n"
-        f"**Selection Reason:** {reason}\n\n"
         f"{winner_text or 'No content extracted.'}"
     )
+
+    # Sidecar metadata: keeps extraction info out of the note body so it can
+    # only ever surface in the app's Note Metadata UI. Stored in a dedicated
+    # "note metadata" folder inside the vault — never next to the notes.
+    meta_folder = main_extractions_folder / "note metadata"
+    meta_folder.mkdir(parents=True, exist_ok=True)
+    meta_sidecar_file = meta_folder / f"{sanitized_title}.md.meta.json"
+    safe_write_file(meta_sidecar_file, json.dumps({
+        "source": video_url,
+        "engine": winner_name
+    }, indent=2), encoding="utf-8")
 
 
 def process_local_file(file_path: str, item_raw_folder: Path, main_extractions_folder: Path, ocr_preference: str = "adaptive"):

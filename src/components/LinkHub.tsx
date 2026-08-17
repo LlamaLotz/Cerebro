@@ -165,12 +165,34 @@ export const LinkHub: React.FC<LinkHubProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outbound, deniedEntries]);
 
-  const visibleOutbound = outbound.filter((l) => !denied.has(outboundKey(l)));
+  // Only surface connections whose target/source note actually exists in the
+  // current vault (`allNotes`). Notes from other vaults — or notes that were
+  // deleted (stale SQLite rows) — would otherwise show as ghost suggestions.
+  const knownPaths = useMemo(
+    () => new Set(allNotes.map((n) => n.path.toLowerCase())),
+    [allNotes]
+  );
+  const knownTitles = useMemo(
+    () => new Set(allNotes.map((n) => n.title.toLowerCase())),
+    [allNotes]
+  );
 
-  const visibleMentions = mentions.filter((m) => !denied.has(mentionKey(m)));
-  const visibleRelated = related.filter((m) => !denied.has(semanticKey(m)));
-  const visibleBlocks = blocks.filter((m) => !denied.has(blockKey(m)));
-  const visibleBacklinks = backlinks.filter((b) => !denied.has(backlinkKey(b)));
+  const visibleOutbound = outbound.filter(
+    (l) => !denied.has(outboundKey(l)) && knownTitles.has(l.targetTitle.toLowerCase())
+  );
+
+  const visibleMentions = mentions.filter(
+    (m) => !denied.has(mentionKey(m)) && knownPaths.has(m.targetNoteId.toLowerCase())
+  );
+  const visibleRelated = related.filter(
+    (m) => !denied.has(semanticKey(m)) && knownPaths.has(m.note_id.toLowerCase())
+  );
+  const visibleBlocks = blocks.filter(
+    (m) => !denied.has(blockKey(m)) && knownPaths.has(m.note_id.toLowerCase())
+  );
+  const visibleBacklinks = backlinks.filter(
+    (b) => !denied.has(backlinkKey(b)) && knownPaths.has(b.source_path.toLowerCase())
+  );
   const total =
     keywords.length +
     visibleMentions.length +
