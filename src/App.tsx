@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Editor } from './components/Editor';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { GraphView } from './components/GraphView';
+import { GraphViewContainer } from './components/GraphViewContainer';
 import { TopicsView } from './components/TopicsView';
 import { AISidebar } from './components/AISidebar';
 import { SettingsModal } from './components/SettingsModal';
@@ -17,6 +17,7 @@ import { appLogger } from './services/appLogger';
 import { formatNote, noteTitleMatches } from './utils/formatter';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
+import { useDialog } from './components/DialogProvider';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'cerebro_app_settings';
@@ -40,23 +41,39 @@ function buildGraphFromPayload(payload: GraphPayload): {
   const linkSet = new Set<string>();
   for (const l of payload.links) {
     if (l.source.toLowerCase() === l.target.toLowerCase()) continue;
-    const key = `${l.source} -> ${l.target}`;
-    const reverseKey = `${l.target} -> ${l.source}`;
+    // Dedup case-insensitively (both directions) so a graph refresh never
+    // double-counts an edge that differs only in title casing.
+    const key = `${l.source.toLowerCase()} -> ${l.target.toLowerCase()}`;
+    const reverseKey = `${l.target.toLowerCase()} -> ${l.source.toLowerCase()}`;
     if (linkSet.has(key) || linkSet.has(reverseKey)) continue;
     linkSet.add(key);
-    if (!nodeMap.has(l.target.toLowerCase())) {
-      nodeMap.set(l.target.toLowerCase(), {
+    // Both endpoints MUST exist as nodes: d3-force's forceLink throws
+    // "node not found: <id>" when a link references an id that isn't in the
+    // simulation's node set, which crashes the whole graph pane. The Rust
+    // snapshot can race a full re-index (split/rename), so a link's source
+    // may reference a note whose node hasn't landed yet — drop the link
+    // rather than feed d3 a dangling reference. Missing targets become
+    // uncreated (dashed) nodes, same as before.
+    const sourceNode = nodeMap.get(l.source.toLowerCase());
+    if (!sourceNode) continue;
+    let targetNode = nodeMap.get(l.target.toLowerCase());
+    if (!targetNode) {
+      targetNode = {
         id: l.target,
         title: l.target,
         exists: false,
         linksCount: 0,
-      });
+      };
+      nodeMap.set(l.target.toLowerCase(), targetNode);
     }
-    links.push({ source: l.source, target: l.target });
-    const s = nodeMap.get(l.source.toLowerCase());
-    const t = nodeMap.get(l.target.toLowerCase());
-    if (s) s.linksCount += 1;
-    if (t) t.linksCount += 1;
+    // Use each node's canonical id (NOT the raw link text) for the edge:
+    // the SQL snapshot resolves targets from the raw [[wiki-link]] text
+    // (which keeps its own casing), while node ids come from the note
+    // title/file stem. d3 matches ids exactly, so a "Introduction" vs
+    // "introduction" mismatch would throw "node not found" too.
+    links.push({ source: sourceNode.id, target: targetNode.id });
+    sourceNode.linksCount += 1;
+    targetNode.linksCount += 1;
   }
   return { nodes: Array.from(nodeMap.values()), links };
 }
@@ -72,8 +89,13 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export default function App() {
+  // Cerebro's own dialog system (replaces native alert/confirm/prompt).
+  const { alert, confirm, prompt } = useDialog();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notes, setNotes] = useState<NoteFile[]>([]);
+  // Every folder under the vault (incl. empty ones), POSIX-style relative
+  // paths, from the indexer — drives the sidebar's folder tree.
+  const [folders, setFolders] = useState<string[]>([]);
   const [activeNote, setActiveNote] = useState<NoteFile | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -100,7 +122,17 @@ export default function App() {
 
   // Custom dark context menu position (null = hidden). The default
   // WebView2/Edge right-click menu is disabled app-wide; see the effect below.
-  const [ctxMenuPos, setCtxMenuPos] = useState<{ x: number; y: number } | null>(null);
+  // Right-click menu: position + which region it opened in. `region` decides
+  // the menu contents (sidebar = folder actions, editor = text actions) and
+  // whether a menu shows at all (graph/topics = none). When the right-click
+  // lands on a specific note/folder row (`target`), the menu shows that
+  // item's rename/delete actions instead of the generic folder actions.
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    region: 'sidebar' | 'editor' | 'none';
+    target?: { type: 'note' | 'folder'; path: string };
+  } | null>(null);
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
@@ -200,13 +232,50 @@ export default function App() {
   }, [activeNote, notes]);
 
   // Disable the default browser/WebView2 right-click menu app-wide and show
-  // the custom dark context menu in its place.
+  // the custom dark context menu only where it makes sense: the sidebar gets
+  // folder actions, the editor keeps the text actions, and the graph/topics
+  // panes get no menu at all. Regions are marked with `data-region` on the
+  // root of each pane.
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault(); // Disables Edge / WKWebView default right-click menu
-      setCtxMenuPos({ x: e.clientX, y: e.clientY });
+      const el = e.target as Element | null;
+      const region = el?.closest('[data-region]')?.getAttribute('data-region');
+      if (region === 'graph' || region === 'topics') {
+        // No right-click menu on the graph / tags panes — swallow it.
+        setCtxMenu(null);
+        return;
+      }
+      // Right-clicking a note/folder row targets that item: rename/delete
+      // actions on the item itself (the sidebar rows carry data-note-path /
+      // data-folder-path so the menu knows which entry was hovered).
+      const noteRow = el?.closest('[data-note-path]') as HTMLElement | null;
+      if (noteRow) {
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          region: 'sidebar',
+          target: { type: 'note', path: noteRow.dataset.notePath || '' },
+        });
+        return;
+      }
+      const folderRow = el?.closest('[data-folder-path]') as HTMLElement | null;
+      if (folderRow) {
+        setCtxMenu({
+          x: e.clientX,
+          y: e.clientY,
+          region: 'sidebar',
+          target: { type: 'folder', path: folderRow.dataset.folderPath || '' },
+        });
+        return;
+      }
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        region: region === 'sidebar' ? 'sidebar' : 'editor',
+      });
     };
-    const closeMenu = () => setCtxMenuPos(null);
+    const closeMenu = () => setCtxMenu(null);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeMenu();
     };
@@ -261,14 +330,17 @@ export default function App() {
     const path = customPath !== undefined ? customPath : settings.vaultPath;
     if (!path) {
       setNotes([]);
+      setFolders([]);
       return;
     }
     
     try {
       // Rust streams the vault through a bounded worker pool and returns
       // lightweight metadata (no contents) — no IPC flood, no full-vault
-      // buffering. Note contents are lazy-loaded when opened.
-      const files = await tauriAPI.indexVault(path);
+      // buffering. Note contents are lazy-loaded when opened. Folders (incl.
+      // empty ones) come along so the sidebar renders the real tree.
+      const { files, folders: vaultFolders } = await tauriAPI.indexVault(path);
+      setFolders(vaultFolders);
       // Sort notes alphabetically by title
       const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
       
@@ -426,7 +498,9 @@ export default function App() {
   // 5. Native Ingest Engine Action
   const handleRunIngest = async (type: 'url' | 'file', value: string, method: string = 'yt-dlp') => {
     if (!settings.vaultPath) {
-      alert('Please connect a notes vault folder in settings first.');
+      await alert('Please connect a notes vault folder in settings first.', {
+        title: 'No vault connected',
+      });
       return;
     }
 
@@ -499,7 +573,10 @@ export default function App() {
   const handleNewNote = async () => {
     if (!settings.vaultPath) return;
 
-    const titleInput = prompt('Enter new note title:', 'Untitled Note');
+    const titleInput = await prompt('Enter new note title:', {
+      initialValue: 'Untitled Note',
+      title: 'New note',
+    });
     if (titleInput === null) return; // cancelled
 
     const formattedTitle = titleInput.trim() || 'Untitled Note';
@@ -508,7 +585,9 @@ export default function App() {
     // Prevent duplicate files
     const alreadyExists = notes.some((n) => n.title.toLowerCase() === formattedTitle.toLowerCase());
     if (alreadyExists) {
-      alert(`A note named "${formattedTitle}" already exists!`);
+      await alert(`A note named "${formattedTitle}" already exists!`, {
+        title: 'Duplicate note',
+      });
       return;
     }
 
@@ -519,7 +598,8 @@ export default function App() {
     });
 
     if (result.success && result.fullPath) {
-      const files = await tauriAPI.indexVault(settings.vaultPath);
+      const { files, folders: vaultFolders } = await tauriAPI.indexVault(settings.vaultPath);
+      setFolders(vaultFolders);
       const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
       setNotes(sorted);
       appLogger.info(`Note created: ${formattedTitle} (${result.fullPath})`);
@@ -531,14 +611,103 @@ export default function App() {
         if (layout === 'graph' || layout === 'topics') setLayout('split');
       }
     } else {
-      alert(`Error creating note: ${result.error}`);
+      await alert(`Error creating note: ${result.error}`, { title: 'Could not create note' });
       appLogger.error(`Failed to create note: ${formattedTitle}`, new Error(result.error));
+    }
+  };
+
+  // Create a folder in the vault (nested paths like "Projects/Book" work).
+  const handleNewFolder = async () => {
+    if (!settings.vaultPath) return;
+    const name = await prompt('Enter folder name (nested paths work, e.g. Projects/Book):', {
+      title: 'New folder',
+    });
+    if (!name?.trim()) return;
+    const res = await tauriAPI.createFolder({
+      vaultPath: settings.vaultPath,
+      relativePath: name.trim(),
+    });
+    if (!res.success) {
+      await alert(`Error creating folder: ${res.error ?? 'unknown error'}`, {
+        title: 'Could not create folder',
+      });
+    } else {
+      fetchNotes();
+    }
+  };
+
+  // Delete a folder and EVERYTHING inside it. Double-gated: a name prompt
+  // (so typos can't nuke a folder by accident) followed by a warning that
+  // lists how many notes live inside. When called from a folder pill in the
+  // sidebar, `folderPath` is already known, so the name prompt is skipped and
+  // only the confirmation warning shows.
+  const handleDeleteFolder = async (folderPath?: string) => {
+    if (!settings.vaultPath) return;
+    let rel = folderPath?.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+    if (!rel) {
+      const name = await prompt('Enter the folder to delete (relative to the vault, e.g. Projects/Book):', {
+        title: 'Delete folder',
+      });
+      if (!name?.trim()) return;
+      rel = name.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+    }
+    if (!rel) return;
+    const noteCount = notes.filter((n) =>
+      n.relativePath.replace(/\\/g, '/').startsWith(`${rel}/`)
+    ).length;
+    const ok = await confirm(
+      `Delete the folder \"${rel}\"?\n\n` +
+        `This will permanently delete the folder and ALL its contents ` +
+        `(${noteCount} note${noteCount === 1 ? '' : 's'} and any other files).\n` +
+        `This cannot be undone.`,
+      { title: 'Delete folder', confirmLabel: 'Delete', danger: true }
+    );
+    if (!ok) return;
+    const res = await tauriAPI.deleteFolder({ vaultPath: settings.vaultPath, relativePath: rel });
+    if (!res.success) {
+      await alert(`Error deleting folder: ${res.error ?? 'unknown error'}`, {
+        title: 'Could not delete folder',
+      });
+    } else {
+      fetchNotes();
+    }
+  };
+
+  // Rename a folder (and everything inside it). The folder path is passed
+  // from the sidebar pill/context menu; only the leaf name is prompted.
+  const handleRenameFolder = async (folderPath?: string) => {
+    if (!settings.vaultPath || !folderPath) return;
+    const rel = folderPath.trim().replace(/^[\\/]+|[\\/]+$/g, '');
+    if (!rel) return;
+    const leaf = rel.split(/[\\/]/).pop() || rel;
+    const newNameInput = await prompt(`Rename folder \"${leaf}\" to:`, {
+      initialValue: leaf,
+      title: 'Rename folder',
+    });
+    if (newNameInput === null) return;
+    const formatted = newNameInput.trim();
+    if (!formatted || formatted === leaf) return;
+    const newRel = rel.slice(0, rel.length - leaf.length) + formatted;
+    const res = await tauriAPI.renameFolder({
+      vaultPath: settings.vaultPath,
+      oldRelativePath: rel,
+      newRelativePath: newRel,
+    });
+    if (!res.success) {
+      await alert(`Error renaming folder: ${res.error ?? 'unknown error'}`, {
+        title: 'Could not rename folder',
+      });
+    } else {
+      fetchNotes();
     }
   };
 
   // 8. Delete note file
   const handleDeleteNote = async (note: NoteFile) => {
-    const confirmDelete = window.confirm(`Are you sure you want to delete "${note.title}"? This cannot be undone.`);
+    const confirmDelete = await confirm(
+      `Are you sure you want to delete "${note.title}"? This cannot be undone.`,
+      { title: 'Delete note', confirmLabel: 'Delete', danger: true }
+    );
     if (!confirmDelete) return;
 
     const result = await tauriAPI.deleteFile(note.path);
@@ -550,14 +719,17 @@ export default function App() {
       await fetchNotes();
       appLogger.info(`Note deleted: ${note.title} (${note.path})`);
     } else {
-      alert(`Error deleting note: ${result.error}`);
+      await alert(`Error deleting note: ${result.error}`, { title: 'Could not delete note' });
       appLogger.error(`Failed to delete note: ${note.title}`, new Error(result.error));
     }
   };
 
   // 9. Rename note file
   const handleRenameNote = async (note: NoteFile) => {
-    const newTitleInput = prompt(`Rename "${note.title}" to:`, note.title);
+    const newTitleInput = await prompt(`Rename "${note.title}" to:`, {
+      initialValue: note.title,
+      title: 'Rename note',
+    });
     if (newTitleInput === null) return;
 
     const formattedNewTitle = newTitleInput.trim();
@@ -609,7 +781,7 @@ export default function App() {
       }
       appLogger.info(`Note renamed: ${note.title} -> ${formattedNewTitle} (${newPath})`);
     } else {
-      alert(`Error renaming note: ${result.error}`);
+      await alert(`Error renaming note: ${result.error}`, { title: 'Could not rename note' });
       appLogger.error(`Failed to rename note: ${note.title}`, new Error(result.error));
     }
   };
@@ -669,8 +841,9 @@ export default function App() {
       }
     } else {
       // Note doesn't exist yet! Ask user to create it (Obsidian connection model!)
-      const confirmCreate = window.confirm(
-        `Note "${targetTitle}" does not exist yet.\nWould you like to create it and connect them?`
+      const confirmCreate = await confirm(
+        `Note "${targetTitle}" does not exist yet.\nWould you like to create it and connect them?`,
+        { title: 'Create connected note', confirmLabel: 'Create & connect' }
       );
 
       if (confirmCreate && settings.vaultPath) {
@@ -682,7 +855,8 @@ export default function App() {
         });
 
         if (result.success && result.fullPath) {
-          const files = await tauriAPI.indexVault(settings.vaultPath);
+          const { files, folders: vaultFolders } = await tauriAPI.indexVault(settings.vaultPath);
+          setFolders(vaultFolders);
           const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
           setNotes(sorted);
           appLogger.info(`Connected note created via link: ${targetTitle} (${result.fullPath})`);
@@ -693,7 +867,9 @@ export default function App() {
             if (layout === 'graph' || layout === 'topics') setLayout('split');
           }
         } else {
-          alert(`Error creating connected note: ${result.error}`);
+          await alert(`Error creating connected note: ${result.error}`, {
+            title: 'Could not create connected note',
+          });
           appLogger.error(`Failed to create connected note: ${targetTitle}`, new Error(result.error));
         }
       }
@@ -711,7 +887,10 @@ export default function App() {
       
       {/* Sidebar navigation (collapsible) */}
       {sidebarCollapsed ? (
-        <div className="shrink-0 h-full w-11 border-r border-slate-900 bg-slate-950 flex flex-col items-center py-3 gap-2 select-none">
+        <div
+          data-region="sidebar"
+          className="shrink-0 h-full w-11 border-r border-slate-900 bg-slate-950 flex flex-col items-center py-3 gap-2 select-none"
+        >
           <button
             onClick={toggleSidebar}
             className="p-2 rounded-md text-slate-400 hover:text-orange-400 hover:bg-slate-900 transition-colors"
@@ -724,9 +903,12 @@ export default function App() {
         <div className="relative shrink-0 h-full" style={{ width: sidebarWidth }}>
           <Sidebar
             notes={notes}
+            folders={folders}
             activeNote={activeNote}
             onSelectNote={handleSelectNote}
             onNewNote={handleNewNote}
+            onNewFolder={handleNewFolder}
+            onDeleteFolder={handleDeleteFolder}
             onDeleteNote={handleDeleteNote}
             onRenameNote={handleRenameNote}
             onMoveNote={handleMoveNote}
@@ -825,13 +1007,17 @@ export default function App() {
                 onWikiLinkClick={handleWikiLinkClick}
                 scrollRequest={scrollRequest}
                 semanticRefreshToken={semanticTick}
+                onVaultChanged={() => {
+                  fetchNotes();
+                  loadGraph();
+                }}
               />
             </ErrorBoundary>
           )}
 
-          {/* Connected Force Graph Network Pane */}
+          {/* Connected Force Graph Network Pane (2D/3D toggle inside) */}
           {(layout === 'graph' || layout === 'split') && (
-            <GraphView
+            <GraphViewContainer
               graphData={graphData}
               activeNote={graphActiveNote}
               onSelectNoteByTitle={handleWikiLinkClick}
@@ -880,9 +1066,46 @@ export default function App() {
       {/* Persistent, reopenable ingestion log (minimizable badge + drawer) */}
       <IngestionLogPanel />
 
-      {/* Custom dark context menu (replaces the WebView2 default) */}
-      {ctxMenuPos && (
-        <ContextMenu x={ctxMenuPos.x} y={ctxMenuPos.y} onClose={() => setCtxMenuPos(null)} />
+      {/* Custom dark context menu (replaces the WebView2 default) — only the
+          sidebar and editor regions get one; graph/topics get nothing. */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          variant={
+            ctxMenu.target
+              ? ctxMenu.target.type === 'note'
+                ? 'note'
+                : 'folder'
+              : ctxMenu.region === 'sidebar'
+                ? 'sidebar'
+                : 'editor'
+          }
+          onNewFolder={handleNewFolder}
+          // Generic sidebar background (no target): prompt for the folder. The
+          // 'folder' variant passes '__current__' so the hovered path is used.
+          onDeleteFolder={(folderPath) =>
+            folderPath === '__current__'
+              ? ctxMenu.target?.type === 'folder' && handleDeleteFolder(ctxMenu.target.path)
+              : handleDeleteFolder()
+          }
+          // Right-clicked a specific folder: use its path directly.
+          onRenameFolder={() =>
+            ctxMenu.target?.type === 'folder' && handleRenameFolder(ctxMenu.target.path)
+          }
+          // Right-clicked a specific note: resolve it and run its handlers.
+          onRenameNote={() => {
+            if (ctxMenu.target?.type !== 'note') return;
+            const n = notes.find((x) => x.path === ctxMenu.target!.path);
+            if (n) handleRenameNote(n);
+          }}
+          onDeleteNote={() => {
+            if (ctxMenu.target?.type !== 'note') return;
+            const n = notes.find((x) => x.path === ctxMenu.target!.path);
+            if (n) handleDeleteNote(n);
+          }}
+        />
       )}
 
     </div>

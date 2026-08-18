@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { NoteFile, GraphNode, GraphLink } from '../types';
 import { Network, Home, RotateCw } from 'lucide-react';
@@ -7,15 +7,21 @@ interface GraphViewProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   activeNote: NoteFile | null;
   onSelectNoteByTitle: (title: string) => void;
+  /** Extra toolbar controls injected by the container (2D/3D mode toggle). */
+  toolbarExtra?: React.ReactNode;
 }
 
 export const GraphView: React.FC<GraphViewProps> = ({
   graphData,
   activeNote,
   onSelectNoteByTitle,
+  toolbarExtra,
 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const isFirstRenderRef = useRef(true);
+  // True once the graph has ever seen real data — used to scope the fresh-
+  // startup fly-in (alpha(1).restart()) to the first data arrival only.
+  const firstDataSeenRef = useRef(false);
 
   // Persistent node layout: saved (x, y) per note title in localStorage so the
   // graph reopens in the exact arrangement it was left in. Saved coordinates
@@ -24,7 +30,18 @@ export const GraphView: React.FC<GraphViewProps> = ({
   const POSITIONS_KEY = 'cerebro_graph_positions';
   const loadPositions = (): Record<string, { x: number; y: number }> => {
     try {
-      return JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}');
+      const parsed = JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}');
+      // Corrupt cache: multiple nodes pinned at (0,0) is exactly the "top-left
+      // clump" bug — every node stacks at the pane origin because the saved
+      // coordinates are all zero. Discard the whole layout so the radial seed
+      // pass below spreads the nodes out instead of restoring the clump.
+      const entries = Object.values(parsed) as Array<{ x: number; y: number }>;
+      const zeroes = entries.filter((p) => p && p.x === 0 && p.y === 0).length;
+      if (entries.length >= 2 && zeroes >= 2) {
+        localStorage.removeItem(POSITIONS_KEY);
+        return {};
+      }
+      return parsed;
     } catch {
       return {};
     }
@@ -43,17 +60,65 @@ export const GraphView: React.FC<GraphViewProps> = ({
     }
   };
   const positionsRef = useRef(loadPositions());
-  // Viewport transform (zoom/pan) of the last build, preserved across graph
-  // rebuilds so note edits don't reset the user's zoom level. A null value
-  // also means "never fitted this mount" (see the fit logic in the effect).
-  const zoomTransformRef = useRef<d3.ZoomTransform | null>(null);
+  // Viewport transform (zoom/pan), persisted to localStorage so the graph
+  // reopens exactly where it was left — not just across note edits but across
+  // app restarts. A null value also means "never fitted this mount" (see the
+  // fit logic in the effect).
+  const ZOOM_KEY = 'cerebro_graph_zoom';
+  const loadZoom = (): d3.ZoomTransform | null => {
+    try {
+      const raw = localStorage.getItem(ZOOM_KEY);
+      if (!raw) return null;
+      const t = JSON.parse(raw);
+      if (
+        Number.isFinite(t.x) &&
+        Number.isFinite(t.y) &&
+        Number.isFinite(t.k) &&
+        t.k > 0
+      ) {
+        return d3.zoomIdentity.translate(t.x, t.y).scale(t.k);
+      }
+    } catch {
+      // Corrupt/absent — treat as never fitted.
+    }
+    return null;
+  };
+  const saveZoom = (t: d3.ZoomTransform) => {
+    try {
+      localStorage.setItem(ZOOM_KEY, JSON.stringify({ x: t.x, y: t.y, k: t.k }));
+    } catch {
+      // Storage full/unavailable — the viewport just won't persist this time.
+    }
+  };
+  const zoomTransformRef = useRef<d3.ZoomTransform | null>(loadZoom());
+  // Debounced zoom persistence: wheel/gesture events fire faster than a
+  // localStorage write per event is worth.
+  const zoomSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Latest fit function, exposed for the header buttons (the function lives
   // inside the effect where the live simulation is built).
   const fitGraphRef = useRef<((w: number, h: number, d: number) => void) | null>(null);
+  // The SVG's measuring container (clientWidth/Height are read from here).
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // Latest d3.zoom behavior + the active-note centering function, exposed to
+  // the auto-focus effects below (both live inside the graph-build effect
+  // where the simulation is constructed).
+  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const centerOnNodeRef = useRef<(title: string, animate: boolean) => void>(() => {});
+  // Re-heats the simulation (alpha 0.5) so note switches re-arrange the layout
+  // without a manual Refresh. Exposed by the graph-build effect.
+  const reheatSimulationRef = useRef<() => void>(() => {});
+  // Full graph reset (Home/Refresh buttons): re-seeds every node, resets the
+  // zoom transform and re-heats the physics. Exposed by the graph-build effect.
+  const resetGraphRef = useRef<(w: number, h: number) => void>(() => {});
+  // Last (note, node-set) that was auto-focused — edit refreshes with the same
+  // note + node set must NOT re-center (would yank the viewport while typing).
+  const autoFocusStateRef = useRef<{ note: string | null; nodeSet: string }>({
+    note: null,
+    nodeSet: '',
+  });
 
   // Bumped by the Refresh button to force a full re-render of the graph.
-  const [refreshToken, setRefreshToken] = useState(0);
 
   // Keep the latest callback in a ref so graph rebuilds are never triggered by
   // callback identity changes (the expensive D3 simulation only re-runs when
@@ -62,6 +127,19 @@ export const GraphView: React.FC<GraphViewProps> = ({
   useEffect(() => {
     selectNoteRef.current = onSelectNoteByTitle;
   }, [onSelectNoteByTitle]);
+
+  // Safe container measurement with a window fallback: if the pane hasn't been
+  // laid out yet (clientWidth/Height 0 or tiny), fall back to the window bounds
+  // minus the sidebar/header chrome — so the force center and the initial
+  // radial seed never land at (0,0) top-left.
+  const getDimensions = () => {
+    const w = containerRef.current?.clientWidth || 0;
+    const h = containerRef.current?.clientHeight || 0;
+    return {
+      width: w > 100 ? w : window.innerWidth - 300, // subtract sidebar width
+      height: h > 100 ? h : window.innerHeight - 60, // subtract toolbar height
+    };
+  };
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -78,8 +156,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove(); // clear previous renders
 
-    const width = svgRef.current.parentElement?.clientWidth || 600;
-    const height = svgRef.current.parentElement?.clientHeight || 500;
+    const { width, height } = getDimensions();
 
     svg.attr('width', '100%').attr('height', '100%');
 
@@ -120,10 +197,33 @@ export const GraphView: React.FC<GraphViewProps> = ({
           const p = positionsRef.current[n.id];
           (n as any).x = p.x;
           (n as any).y = p.y;
+          // Pin the node at its saved spot: the layout survives exactly as it
+          // was left — the physics only arranges nodes that have no saved
+          // position (new notes), and dragging still works (drag sets fx/fy).
+          (n as any).fx = p.x;
+          (n as any).fy = p.y;
         }
         hasSavedLayout = true;
       }
     }
+
+    // 3.5 Sanitize & spread initial coordinates: nodes with no saved position
+    // (or a corrupt one) would otherwise start at (0, 0) in a d3 simulation —
+    // one clump in the pane's top-left corner, with links fanning to the
+    // origin. Discard top-left/off-screen coordinates (uninitialized, zero, or
+    // near-origin), clear their pins, and re-seed them in a ring around the
+    // canvas center. Valid saved/pinned nodes keep their spots.
+    const seedCount = d3Nodes.length || 1;
+    d3Nodes.forEach((node: any, i: number) => {
+      if (!node.x || node.x < 50 || !node.y || node.y < 50) {
+        const angle = (i / seedCount) * 2 * Math.PI;
+        const radius = 160 + Math.random() * 80;
+        node.x = width / 2 + radius * Math.cos(angle);
+        node.y = height / 2 + radius * Math.sin(angle);
+        node.fx = null;
+        node.fy = null;
+      }
+    });
 
     // 3. Create a container group for zooming
     const gContainer = svg.append('g');
@@ -134,9 +234,12 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .on('zoom', (event) => {
         zoomTransformRef.current = event.transform;
         gContainer.attr('transform', event.transform);
+        if (zoomSaveTimerRef.current) clearTimeout(zoomSaveTimerRef.current);
+        zoomSaveTimerRef.current = setTimeout(() => saveZoom(event.transform), 400);
       });
     
     svg.call(zoom);
+    zoomBehaviorRef.current = zoom;
 
     // 4. Create simulation forces. Strong repulsion + a larger collision
     // radius (which accounts for the labels) keep nodes from clumping into a
@@ -152,6 +255,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .force('x', d3.forceX(width / 2).strength(0.05))
       .force('y', d3.forceY(height / 2).strength(0.05))
       .force('collision', d3.forceCollide().radius((d: any) => Math.max(14, d.linksCount * 1.5 + 12)));
+
+    // Pre-warm the simulation: a few synchronous ticks settle the seeded
+    // positions into a readable layout before the first painted frame (the
+    // settle branches below continue from here), so startup never flashes a
+    // (0,0) clump.
+    for (let i = 0; i < 50 && simulation.alpha() > simulation.alphaMin(); ++i) {
+      simulation.tick();
+    }
 
     // 5. Draw Links (Edges)
     const linkElements = gContainer.append('g')
@@ -250,13 +361,40 @@ export const GraphView: React.FC<GraphViewProps> = ({
         .attr('fill', isCurrent ? '#f8fafc' : '#94a3b8');
     });
 
-    // 9. Simulation Tick function updating positions
+    // 9. Simulation Tick function updating positions. Links reference their
+    // endpoints by string id until the link force resolves them to node
+    // objects; a not-yet-resolved (or dangling) reference evaluates to
+    // undefined, and d3 renders an undefined attr as 0 — the classic
+    // "starburst" of lines fanning to the pane's top-left corner. Resolve
+    // coordinates safely: object endpoints pass through, string ids look up
+    // the node map, and anything missing falls back to the canvas center.
+    //
+    // ID matching: App.buildGraphFromPayload canonicalizes every link endpoint
+    // to the node's `id` (the note title), so `nodeMap.get(link.source)` hits
+    // for the canonical case — but index by `id`, `title` AND `path` so a
+    // reference in any of those string formats still resolves instead of
+    // detaching to (0,0).
+    const nodeMap = new Map<string, any>();
+    for (const n of d3Nodes as any[]) {
+      nodeMap.set(n.id, n);
+      if (n.title && n.title !== n.id) nodeMap.set(n.title, n);
+      if (n.path) nodeMap.set(n.path, n);
+    }
+    const getCoord = (nodeOrId: any, axis: 'x' | 'y'): number => {
+      if (typeof nodeOrId === 'object' && nodeOrId !== null && axis in nodeOrId) {
+        const v = nodeOrId[axis];
+        return Number.isFinite(v) ? v : width / 2;
+      }
+      const found = nodeMap.get(nodeOrId);
+      if (found && Number.isFinite(found[axis])) return found[axis];
+      return axis === 'x' ? width / 2 : height / 2;
+    };
     simulation.on('tick', () => {
       linkElements
-        .attr('x1', (d: any) => d.source.x)
-        .attr('y1', (d: any) => d.source.y)
-        .attr('x2', (d: any) => d.target.x)
-        .attr('y2', (d: any) => d.target.y);
+        .attr('x1', (d: any) => getCoord(d.source, 'x'))
+        .attr('y1', (d: any) => getCoord(d.source, 'y'))
+        .attr('x2', (d: any) => getCoord(d.target, 'x'))
+        .attr('y2', (d: any) => getCoord(d.target, 'y'));
 
       nodeElements.attr('transform', (d: any) => `translate(${d.x}, ${d.y})`);
     });
@@ -307,41 +445,140 @@ export const GraphView: React.FC<GraphViewProps> = ({
     // clump/corner repairs instantly instead of animating for seconds.
     const isFirstRender = isFirstRenderRef.current;
     isFirstRenderRef.current = false;
-    if (!isFirstRender || hasSavedLayout) {
+    if (hasSavedLayout) {
+      // Pinned saved nodes + a short synchronous settle for any new/unpinned
+      // nodes, then persist. No fly-in animation — the graph appears exactly
+      // where it was left.
+      for (let i = 0; i < 200 && simulation.alpha() > simulation.alphaMin(); i++) {
+        simulation.tick();
+      }
+      simulation.stop();
+      savePositions(d3Nodes);
+    } else if (!isFirstRender) {
       for (let i = 0; i < 300 && simulation.alpha() > simulation.alphaMin(); i++) {
         simulation.tick();
       }
       simulation.stop();
+      // Persist the settled layout so the next open restores this arrangement.
+      savePositions(d3Nodes);
+      // Fresh startup (no saved layout): re-heat the simulation so the seeded
+      // positions spread into place with a visible animation instead of
+      // popping. Edit refreshes keep the saved layout and stay synchronous
+      // (no distraction while typing).
+      if (!firstDataSeenRef.current) {
+        simulation.alpha(1).restart();
+      }
     }
+    firstDataSeenRef.current = d3Nodes.length > 0;
+
+    // --- Auto-focus machinery ----------------------------------------------
+    // Centers the ACTIVE note at k=1.2 (mount, first data arrival, note
+    // switch) instead of leaving the view zoomed out on the whole graph. The
+    // center waits for the physics to settle so it lands on the node's real
+    // position, and de-dupes on (note, node set) so plain edit refreshes with
+    // the same note + node set never yank the viewport.
+    const activeNode = activeNote
+      ? d3Nodes.find((d: any) => d.title?.toLowerCase() === activeNote.title.toLowerCase())
+      : undefined;
+    const centerOnNode = (title: string, animate: boolean) => {
+      const node = d3Nodes.find((d: any) => d.title?.toLowerCase() === title.toLowerCase()) as any;
+      if (!node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+      const nodeSetKey = d3Nodes
+        .map((d: any) => d.id)
+        .sort()
+        .join('\u0001');
+      const prev = autoFocusStateRef.current;
+      if (prev.note === title.toLowerCase() && prev.nodeSet === nodeSetKey) return; // already centered
+      autoFocusStateRef.current = { note: title.toLowerCase(), nodeSet: nodeSetKey };
+      const doCenter = () => {
+        const cw = containerRef.current?.clientWidth || width;
+        const ch = containerRef.current?.clientHeight || height;
+        const transform = d3.zoomIdentity
+          .translate(cw / 2 - node.x * 1.2, ch / 2 - node.y * 1.2)
+          .scale(1.2);
+        zoomTransformRef.current = transform;
+        if (animate) {
+          svg.transition().duration(600).call(zoom.transform, transform);
+        } else {
+          svg.call(zoom.transform, transform);
+        }
+      };
+      if (simulation.alpha() > simulation.alphaMin()) {
+        // Layout still animating (fresh fly-in): center once it settles.
+        simulation.on('end.autoFocus', () => {
+          simulation.on('end.autoFocus', null);
+          doCenter();
+        });
+      } else {
+        doCenter();
+      }
+    };
+    centerOnNodeRef.current = centerOnNode;
+
+    // Re-heat the physics on note switch so the active note's neighborhood
+    // re-arranges without a manual Refresh. Idle-only: never interrupts an
+    // in-flight animation with a fresh alpha bump.
+    const reheatSimulation = () => {
+      if (simulation.alpha() <= simulation.alphaMin()) {
+        simulation.alpha(0.5).restart();
+      }
+    };
+    reheatSimulationRef.current = reheatSimulation;
+
+    // Full graph reset (Home / Refresh buttons): re-seed every node radially
+    // around the canvas center, clear the persisted layout, reset the zoom
+    // transform, and re-heat the physics so the graph re-lays itself out in
+    // front of the user — no follow-up clicks needed.
+    const resetGraphLayout = (w: number, h: number) => {
+      const n = d3Nodes.length || 1;
+      d3Nodes.forEach((node: any, i: number) => {
+        const angle = (i / n) * 2 * Math.PI;
+        const radius = 160 + Math.random() * 60;
+        node.x = w / 2 + radius * Math.cos(angle);
+        node.y = h / 2 + radius * Math.sin(angle);
+        node.fx = null;
+        node.fy = null;
+      });
+      positionsRef.current = {};
+      const identity = d3.zoomIdentity;
+      zoomTransformRef.current = identity;
+      svg.transition().duration(500).call(zoom.transform, identity);
+      simulation.alpha(1).restart();
+    };
+    resetGraphRef.current = resetGraphLayout;
 
     // Re-apply the viewport transform from the previous build (zoom survives
     // note edits), then make sure every node is still in view. A null view
     // transform means this mount has never been fitted — e.g. the first effect
     // run had no data yet, or stale/corrupt saved coordinates put the nodes in
     // a corner. In that case always center the graph, never trust the saved
-    // coordinates to be anywhere useful.
+    // coordinates to be anywhere useful. (When an active note exists, the
+    // auto-focus effect below owns the initial view instead of a whole-graph
+    // fit.)
     if (zoomTransformRef.current) {
       svg.call(zoom.transform, zoomTransformRef.current);
       if (nodesOutOfView(zoomTransformRef.current, width, height)) {
         fitGraph(width, height, 300);
       }
-    } else {
+    } else if (!activeNode) {
       fitGraph(width, height, 0);
     }
 
     // First-ever render (no saved layout): fit once the physics animation
-    // settles. One-shot — post-drag simulation restarts must never reset the
-    // user's zoom.
+    // settles, and persist the settled arrangement. One-shot — post-drag
+    // simulation restarts must never reset the user's zoom. When an active
+    // note exists, the settle-triggered auto-focus centers it instead.
     if (isFirstRender && !hasSavedLayout) {
       simulation.on('end', () => {
-        fitGraph(width, height, 400);
+        savePositions(d3Nodes);
+        if (!activeNode) fitGraph(width, height, 400);
         simulation.on('end', null);
       });
     }
 
     // Live pane resizes (split view drag, AI panel resize, opening/closing the
     // graph tab): refit only when nodes would fall out of the visible area.
-    const container = svgRef.current.parentElement as HTMLElement | null;
+    const container = containerRef.current;
     let resizeObserver: ResizeObserver | null = null;
     if (container) {
       resizeObserver = new ResizeObserver(() => {
@@ -388,25 +625,70 @@ export const GraphView: React.FC<GraphViewProps> = ({
     return () => {
       resizeObserver?.disconnect();
       simulation.stop();
+      if (zoomSaveTimerRef.current) {
+        clearTimeout(zoomSaveTimerRef.current);
+        zoomSaveTimerRef.current = null;
+      }
     };
-  }, [graphData, activeNote, refreshToken]);
+  }, [graphData, activeNote]);
 
   // Fit all nodes into view (header button).
   const handleFitView = () => {
-    const c = svgRef.current?.parentElement;
+    const c = containerRef.current;
     if (c) fitGraphRef.current?.(c.clientWidth, c.clientHeight, 400);
   };
 
-  // Re-run the physics fly-in from scratch (header button). Discards the
-  // persisted layout so a corrupt/stale arrangement gets fully re-laid-out.
-  const handleRefresh = () => {
-    positionsRef.current = {};
-    isFirstRenderRef.current = true;
-    setRefreshToken((t) => t + 1);
+  // Home / Refresh (header buttons): full graph reset — clears the persisted
+  // layout cache, re-seeds all nodes radially around the canvas center, resets
+  // the zoom transform to center, and re-heats the physics so the graph
+  // re-lays itself out in front of the user.
+  const handleResetGraph = () => {
+    const { width, height } = getDimensions();
+    localStorage.removeItem(POSITIONS_KEY);
+    resetGraphRef.current(width, height);
   };
 
+  // Auto-focus & center the ACTIVE note on mount and note switching: smoothly
+  // animate the zoom so the active node sits center-screen at k=1.2. The
+  // settle-wait and (note, node-set) de-dupe live inside centerOnNodeRef (set
+  // by the graph-build effect), so edit refreshes that keep the same note and
+  // node set never re-center the view.
+  useEffect(() => {
+    const title = activeNote?.title;
+    if (!title) return;
+    centerOnNodeRef.current(title, true);
+    // Re-heat the physics so the active note's neighborhood re-arranges — no
+    // manual Refresh needed on note switch.
+    reheatSimulationRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNote?.title, graphData]);
+
+  // Measured fit-on-mount: only run the whole-graph fit once the SVG container
+  // reports real dimensions (a 0×0 first measure would fit against the 600×500
+  // fallback). Gated to when no note is active — auto-focus owns the view when
+  // a note is selected — and skipped when a saved viewport exists, so the app
+  // still reopens exactly where the user left off.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let fitted = false;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || entry.contentRect.width <= 0 || entry.contentRect.height <= 0) return;
+      if (fitted) return;
+      fitted = true;
+      if (!activeNote && !zoomTransformRef.current) handleFitView();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphData]);
+
   return (
-    <div className="flex-1 bg-slate-950/20 border-r border-slate-900/60 flex flex-col h-full relative select-none">
+    <div
+      data-region="graph"
+      className="flex-1 bg-slate-950/20 border-r border-slate-900/60 flex flex-col h-full relative select-none"
+    >
       
       {/* Header bar */}
       <div className="px-6 py-3.5 border-b border-slate-900/60 bg-slate-950/20 flex items-center justify-between shrink-0">
@@ -415,17 +697,18 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <h2 className="text-sm font-semibold text-slate-100">Knowledge Network</h2>
         </div>
         <div className="text-[10px] text-slate-500 font-medium flex items-center gap-2">
+          {toolbarExtra}
           <span className="hidden lg:block">Drag to arrange • Scroll to zoom</span>
           <button
-            onClick={handleFitView}
-            title="Fit all nodes in view"
+            onClick={handleResetGraph}
+            title="Reset graph: re-layout all nodes around the center"
             className="p-1.5 rounded-md bg-slate-900/60 border border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1"
           >
             <Home className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={handleRefresh}
-            title="Re-animate the graph"
+            onClick={handleResetGraph}
+            title="Reset graph: re-layout all nodes around the center"
             className="p-1.5 rounded-md bg-slate-900/60 border border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1"
           >
             <RotateCw className="w-3.5 h-3.5" />
@@ -434,7 +717,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       </div>
 
       {/* SVG Container */}
-      <div className="flex-1 overflow-hidden relative">
+      <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <svg ref={svgRef} className="w-full h-full" />
         
         {/* Legend */}

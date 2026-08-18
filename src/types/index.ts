@@ -53,6 +53,24 @@ export interface OmniRouteConfig {
   model: string;
 }
 
+// Result of a full vault index: note metadata plus every folder under the
+// vault (POSIX-style relative paths), including folders with no notes, so the
+// sidebar can render the real folder structure.
+export interface IndexedVault {
+  files: NoteFile[];
+  folders: string[];
+}
+
+// One entry in a note's version timeline: the original snapshot (versionId
+// null) or a later delta, reconstructed to its full content so the frontend
+// never has to apply patches.
+export interface ReconstructedVersion {
+  notePath: string;
+  versionId: number | null;
+  content: string;
+  createdAt: string;
+}
+
 export interface AppSettings {
   vaultPath: string;
   ingestionScript: string;
@@ -70,9 +88,10 @@ export const tauriAPI = {
   // Indexes the vault in Rust (bounded worker pool) and returns lightweight
   // metadata WITHOUT contents (`content` is absent). Note contents are fetched
   // lazily via `readFile` when opened; the Editor/App normalize `undefined`
-  // to an empty string where needed.
-  indexVault: async (vaultPath: string): Promise<NoteFile[]> => {
-    return await invoke<NoteFile[]>('index_vault', { vaultPath });
+  // to an empty string where needed. Also returns every folder under the
+  // vault (incl. empty ones) so the sidebar can render the real tree.
+  indexVault: async (vaultPath: string): Promise<IndexedVault> => {
+    return await invoke<IndexedVault>('index_vault', { vaultPath });
   },
   // Content-free knowledge graph (nodes + edges) straight from SQLite.
   getGraph: async (): Promise<GraphPayload> => {
@@ -86,6 +105,23 @@ export const tauriAPI = {
   // run, 30s idle debounce) — never per autosave.
   recordNoteVersion: async (notePath: string, content: string): Promise<number | null> => {
     return await invoke<number | null>('record_note_version', { notePath, content });
+  },
+  // Full version timeline for a note (base snapshot + every delta, each
+  // reconstructed to its full content). Powers the Time Machine restore UI.
+  getNoteVersionHistory: async (notePath: string): Promise<ReconstructedVersion[]> => {
+    return await invoke<ReconstructedVersion[]>('get_all_reconstructed_versions', { notePath });
+  },
+  renameFolder: async (data: { vaultPath: string; oldRelativePath: string; newRelativePath: string }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await invoke('rename_folder', {
+        vaultPath: data.vaultPath,
+        oldRelativePath: data.oldRelativePath,
+        newRelativePath: data.newRelativePath,
+      });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
   },
   writeFile: async (data: { filePath: string; content: string }): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -110,6 +146,28 @@ export const tauriAPI = {
   deleteFile: async (filePath: string): Promise<{ success: boolean; error?: string }> => {
     try {
       await invoke('delete_file', { filePath });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+  createFolder: async (data: { vaultPath: string; relativePath: string }): Promise<{ success: boolean; fullPath?: string; error?: string }> => {
+    try {
+      const fullPath = await invoke<string>('create_folder', {
+        vaultPath: data.vaultPath,
+        relativePath: data.relativePath,
+      });
+      return { success: true, fullPath };
+    } catch (err: any) {
+      return { success: false, error: err.toString() };
+    }
+  },
+  deleteFolder: async (data: { vaultPath: string; relativePath: string }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await invoke('delete_folder', {
+        vaultPath: data.vaultPath,
+        relativePath: data.relativePath,
+      });
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.toString() };

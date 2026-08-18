@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, File, Play, HelpCircle, AlertCircle } from 'lucide-react';
 import { tauriAPI } from '../types';
+import { useDialog } from './DialogProvider';
 
 interface IngestModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
   const [filePathValue, setFilePathValue] = useState('');
   const [ytMethod, setYtMethod] = useState<'yt-dlp' | 'whisper'>('yt-dlp');
   const [ocrMode, setOcrMode] = useState<'A' | 'O' | 'N'>('A');
+  const { alert } = useDialog();
 
   if (!isOpen) return null;
 
@@ -28,18 +30,18 @@ export const IngestModal: React.FC<IngestModalProps> = ({
     }
   };
 
-  const handleStartIngest = () => {
+  const handleStartIngest = async () => {
     if (ingestType === 'url') {
       const trimmed = urlValue.trim();
       if (!trimmed) {
-        alert('Please enter a valid URL.');
+        await alert('Please enter a valid URL.', { title: 'Missing URL' });
         return;
       }
       onIngest('url', trimmed, ytMethod);
     } else {
       const trimmed = filePathValue.trim();
       if (!trimmed) {
-        alert('Please select a file to ingest.');
+        await alert('Please select a file to ingest.', { title: 'No file selected' });
         return;
       }
       onIngest('file', trimmed + '|' + ocrMode);

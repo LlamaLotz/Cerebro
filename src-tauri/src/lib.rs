@@ -622,7 +622,7 @@ fn select_folder() -> Option<String> {
 fn index_vault(
     app_handle: tauri::AppHandle,
     vault_path: String,
-) -> Result<Vec<engine::indexer::IndexedFile>, String> {
+) -> Result<engine::indexer::IndexedVault, String> {
     engine::indexer::index_vault(Path::new(&vault_path), app_handle)
 }
 
@@ -723,6 +723,114 @@ fn create_file(vault_path: String, relative_path: String, content: Option<String
     suppress_self_write(&file_path, SELF_WRITE_MASK_MS);
     fs::write(&file_path, file_content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn create_folder(vault_path: String, relative_path: String) -> Result<String, String> {
+    let dir = Path::new(&vault_path).join(&relative_path);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn delete_folder(vault_path: String, relative_path: String) -> Result<(), String> {
+    let root = Path::new(&vault_path);
+    let dir = root.join(&relative_path);
+
+    // Reject path traversal, the vault root itself, and the app-managed
+    // sidecar folder (its deletion would orphan note metadata).
+    let rel = relative_path.replace('\\', "/");
+    let rel_trimmed = rel.trim_matches('/');
+    if rel_trimmed.is_empty()
+        || rel_trimmed == "."
+        || rel_trimmed == ".."
+        || rel_trimmed.starts_with("../")
+        || rel_trimmed.contains("/../")
+    {
+        return Err("Invalid folder path".to_string());
+    }
+    if !dir.exists() {
+        return Err(format!("Folder not found: {}", relative_path));
+    }
+    if !dir.is_dir() {
+        return Err(format!("Not a folder: {}", relative_path));
+    }
+    if dir == root {
+        return Err("Cannot delete the vault root folder".to_string());
+    }
+    if dir
+        .file_name()
+        .map(|n| n.to_string_lossy().eq_ignore_ascii_case("note metadata"))
+        .unwrap_or(false)
+    {
+        return Err("Cannot delete the app-managed 'note metadata' folder".to_string());
+    }
+
+    fs::remove_dir_all(&dir).map_err(|e| format!("Failed to delete folder: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn rename_folder(
+    app_handle: tauri::AppHandle,
+    vault_path: String,
+    old_relative_path: String,
+    new_relative_path: String,
+) -> Result<(), String> {
+    let root = Path::new(&vault_path);
+    let old_dir = root.join(&old_relative_path);
+    let new_dir = root.join(&new_relative_path);
+
+    // Reject path traversal, the vault root itself, and the app-managed
+    // sidecar folder (same guards as delete_folder).
+    let rel = old_relative_path.replace('\\', "/");
+    let rel_trimmed = rel.trim_matches('/');
+    if rel_trimmed.is_empty()
+        || rel_trimmed == "."
+        || rel_trimmed == ".."
+        || rel_trimmed.starts_with("../")
+        || rel_trimmed.contains("/../")
+    {
+        return Err("Invalid folder path".to_string());
+    }
+    if !old_dir.exists() {
+        return Err(format!("Folder not found: {}", old_relative_path));
+    }
+    if !old_dir.is_dir() {
+        return Err(format!("Not a folder: {}", old_relative_path));
+    }
+    if old_dir == root {
+        return Err("Cannot rename the vault root folder".to_string());
+    }
+    if old_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().eq_ignore_ascii_case("note metadata"))
+        .unwrap_or(false)
+    {
+        return Err("Cannot rename the app-managed 'note metadata' folder".to_string());
+    }
+    // The new path must not collide with an existing entry.
+    if new_dir.exists() {
+        return Err(format!("A folder named '{}' already exists", new_relative_path));
+    }
+    if let Some(parent) = new_dir.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
+    fs::rename(&old_dir, &new_dir).map_err(|e| e.to_string())?;
+
+    // Re-point every DB row under the old path to the new path so
+    // embeddings, history and graph edges survive the move. (The watcher's
+    // rename handler rewrites per-file, but a folder move fires one event per
+    // contained note — doing it here in one pass is atomic and cheaper.)
+    let old_prefix = old_dir.to_string_lossy().to_string();
+    let new_prefix = new_dir.to_string_lossy().to_string();
+    if let Ok(conn) = db::init_db(&app_handle) {
+        let _ = db::rename_folder_paths(&conn, &old_prefix, &new_prefix);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1161,6 +1269,9 @@ pub fn run() {
             write_file,
             read_file,
             create_file,
+            create_folder,
+            delete_folder,
+            rename_folder,
             delete_file,
             rename_file,
             run_ingestion_script,

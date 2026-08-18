@@ -436,6 +436,53 @@ pub fn upsert_note(
     tx.commit().map_err(|e| e.to_string())
 }
 
+/// Re-points every path-keyed row whose id/path starts with `old_prefix` to
+/// `new_prefix` (used when a folder is renamed on disk). Runs inside a
+/// transaction with FK enforcement off, mirroring the single-file rename in
+/// the watcher: notes, aliases, backlinks, applied links, embeddings, block
+/// embeddings, tags, denied links and version history all follow the move so
+/// semantic/block suggestions and history survive a folder rename.
+pub fn rename_folder_paths(
+    conn: &Connection,
+    old_prefix: &str,
+    new_prefix: &str,
+) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute_batch("PRAGMA foreign_keys = OFF").map_err(|e| e.to_string())?;
+
+    // Prefix-match without LIKE (paths can contain `%`/`_`).
+    let re_point = |tx: &rusqlite::Transaction, table: &str, col: &str| -> Result<(), String> {
+        tx.execute(
+            &format!(
+                "UPDATE {table} SET {col} = REPLACE({col}, ?1, ?2) \
+                 WHERE substr({col}, 1, length(?1)) = ?1"
+            ),
+            params![old_prefix, new_prefix],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+
+    re_point(&tx, "notes", "id")?;
+    re_point(&tx, "notes", "path")?;
+    re_point(&tx, "aliases", "note_id")?;
+    re_point(&tx, "backlinks", "source_path")?;
+    re_point(&tx, "backlinks", "target_path")?;
+    // `links.source` is a path; `links.target` is a raw title (only re-point
+    // it when it happens to carry a path, mirroring the watcher's rename).
+    re_point(&tx, "links", "source")?;
+    re_point(&tx, "links", "target")?;
+    re_point(&tx, "embeddings", "note_id")?;
+    re_point(&tx, "block_embeddings", "note_id")?;
+    re_point(&tx, "tags", "note_id")?;
+    re_point(&tx, "denied_links", "note_path")?;
+    re_point(&tx, "note_history_base", "note_path")?;
+    re_point(&tx, "note_history_deltas", "note_path")?;
+
+    tx.execute_batch("PRAGMA foreign_keys = ON").map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
 /// Removes every index entry whose path no longer exists on disk.
 ///
 /// `index_vault` upserts only the files it finds, so without this purge a
@@ -543,9 +590,30 @@ pub fn purge_stale_notes(conn: &Connection, existing: &HashSet<String>) -> Resul
 
     tx.commit().map_err(|e| e.to_string())
 }
-fn offset_to_line(content: &str, offset: usize) -> i64 {
-    let upto = offset.min(content.len());
-    content.as_bytes()[..upto].iter().filter(|&&b| b == b'\n').count() as i64 + 1
+
+/// Per-source/target backlink row cap and per-note total cap. A multi-MB note
+/// can mention the same title hundreds of times; the LinkHub only surfaces a
+/// handful of occurrences per target, so capping keeps the backlinks table (and
+/// the inserts below) bounded instead of exploding with thousands of rows.
+const MAX_BACKLINKS_PER_TARGET: usize = 5;
+const MAX_BACKLINKS_PER_NOTE: usize = 500;
+
+/// Byte offsets of every `\n` in `content` (used for O(log n) line lookups).
+fn build_line_starts(content: &str) -> Vec<usize> {
+    content
+        .bytes()
+        .enumerate()
+        .filter(|&(_, b)| b == b'\n')
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// 1-based line number for a byte offset, via binary search over the newline
+/// offsets. (The old `offset_to_line` rescanned the prefix per mention —
+/// O(n) per mention, i.e. quadratic on multi-MB notes.)
+fn line_number(line_starts: &[usize], offset: usize) -> i64 {
+    let idx = line_starts.partition_point(|&p| p < offset);
+    idx as i64 + 1
 }
 
 /// Clears old backlinks for `source_path` and inserts newly discovered matches
@@ -566,12 +634,27 @@ pub fn update_backlinks(
     )
     .map_err(|e| e.to_string())?;
 
+    // Precompute newline offsets once; every mention then resolves its line via
+    // binary search instead of rescaming the note prefix.
+    let line_starts = build_line_starts(content);
+    let mut per_target: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut total = 0usize;
+
     for mention in mentions {
         if mention.target_note_id == source_path {
             continue;
         }
-        let start_line = offset_to_line(content, mention.start);
-        let end_line = offset_to_line(content, mention.end);
+        if total >= MAX_BACKLINKS_PER_NOTE {
+            break;
+        }
+        let count = per_target.entry(mention.target_note_id.as_str()).or_insert(0);
+        if *count >= MAX_BACKLINKS_PER_TARGET {
+            continue;
+        }
+        *count += 1;
+        total += 1;
+        let start_line = line_number(&line_starts, mention.start);
+        let end_line = line_number(&line_starts, mention.end);
         tx.execute(
             "INSERT INTO backlinks (source_path, target_path, target_block_id, start_line, end_line, matched_text)
              VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
@@ -701,6 +784,15 @@ pub fn update_links_flat(
 /// Existing nodes come from `notes`; edges come from `links`, with both sides
 /// resolved to display titles so the frontend needs no file contents.
 pub fn get_graph(conn: &Connection) -> Result<GraphPayload, String> {
+    // One read transaction: nodes and links must come from the same snapshot.
+    // The frontend reloads the graph right after split/rename/ingest while a
+    // full re-index is still mid-flight, and in WAL mode two separate reads
+    // can observe different commits — a link row could reference a note whose
+    // `notes` row the nodes query didn't see yet, which crashes d3-force with
+    // "node not found: <id>". A single transaction pins both queries to one
+    // consistent view.
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
     let mut nodes = Vec::new();
     {
         let mut stmt = conn
@@ -745,6 +837,7 @@ pub fn get_graph(conn: &Connection) -> Result<GraphPayload, String> {
         }
     }
 
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(GraphPayload { nodes, links })
 }
 

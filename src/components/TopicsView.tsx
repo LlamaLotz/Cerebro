@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Tags, Link2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { linkerService } from '../services/linkerService';
 
 interface TopicGroup {
@@ -41,6 +42,20 @@ export const TopicsView: React.FC<TopicsViewProps> = ({ onWikiLinkClick }) => {
     loadTopics();
   }, [loadTopics]);
 
+  // Re-fetch topic groups when the vault changes (external edits, renames,
+  // imports) so a tag added to any note shows up without a manual Refresh.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen('vault-changed', () => loadTopics())
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((e) => console.error('Failed to listen for vault changes:', e));
+    return () => {
+      unlisten?.();
+    };
+  }, [loadTopics]);
+
   const toggleTag = (tag: string) => {
     setExpandedTags((prev) => {
       const next = new Set(prev);
@@ -53,7 +68,10 @@ export const TopicsView: React.FC<TopicsViewProps> = ({ onWikiLinkClick }) => {
   const totalNotes = topicGroups.reduce((sum, g) => sum + g.notes.length, 0);
 
   return (
-    <div className="flex-1 h-full flex flex-col overflow-hidden">
+    <div
+      data-region="topics"
+      className="flex-1 h-full flex flex-col overflow-hidden"
+    >
       <div className="px-6 py-2.5 border-b border-neutral-900 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <h3 className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">

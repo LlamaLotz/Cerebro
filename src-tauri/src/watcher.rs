@@ -84,7 +84,9 @@ fn process_batch(app_handle: &AppHandle, batch: HashMap<PathBuf, EventKind>) {
     let mut changes: Vec<PathBuf> = Vec::new();
 
     for (path, kind) in batch {
-        if !is_markdown(&path) {
+        // Skip non-markdown files AND hidden/ignored paths (dot-prefixed
+        // segments, the extractor's `note metadata/` sidecar folder).
+        if !is_markdown(&path) || crate::engine::indexer::is_hidden(&path) {
             continue;
         }
         match kind {

@@ -1,10 +1,25 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { Copy, Scissors, ClipboardPaste, Maximize2 } from 'lucide-react';
+import { Copy, Scissors, ClipboardPaste, Maximize2, FolderPlus, FolderMinus, Edit3, Trash2, Pencil } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
   y: number;
   onClose: () => void;
+  /**
+   * What actions the menu shows:
+   *  - 'sidebar': vault folder actions (new / delete folder)
+   *  - 'note': right-clicked a specific note (rename / delete note)
+   *  - 'folder': right-clicked a specific folder (rename / delete folder)
+   *  - 'editor': text-edit actions
+   */
+  variant: 'sidebar' | 'note' | 'folder' | 'editor';
+  onNewFolder?: () => void;
+  /** Delete a folder — no args = generic sidebar background (prompts for a
+   *  path); the 'folder' variant receives the hovered folder's path. */
+  onDeleteFolder?: (folderPath?: string) => void;
+  onRenameFolder?: () => void;
+  onRenameNote?: () => void;
+  onDeleteNote?: () => void;
 }
 
 const EDGE_MARGIN = 8;
@@ -16,8 +31,20 @@ const isEditable = (el: Element | null): el is HTMLInputElement | HTMLTextAreaEl
 };
 
 // Custom dark-mode replacement for the default WebView2/Edge right-click menu.
-// Text actions operate on the current selection / focused editable element.
-export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose }) => {
+// Right-clicking a note/folder row in the sidebar targets that item with
+// rename/delete actions; everywhere else it's the text actions, which operate
+// on the current selection / focused editable element.
+export const ContextMenu: React.FC<ContextMenuProps> = ({
+  x,
+  y,
+  onClose,
+  variant,
+  onNewFolder,
+  onDeleteFolder,
+  onRenameFolder,
+  onRenameNote,
+  onDeleteNote,
+}) => {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState({ left: x, top: y });
 
@@ -100,17 +127,22 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose }) => {
     }
   };
 
-  const Item: React.FC<{ icon: React.ElementType; label: string; action: 'copy' | 'cut' | 'paste' | 'selectall' }> = ({
+  const Item: React.FC<{ icon: React.ElementType; label: string; onClick: () => void; danger?: boolean }> = ({
     icon: Icon,
     label,
-    action,
+    onClick,
+    danger,
   }) => (
     <button
       type="button"
-      onClick={() => runAction(action)}
-      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium text-slate-200 hover:bg-orange-500/10 hover:text-orange-300 transition-colors"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium transition-colors ${
+        danger
+          ? 'text-rose-300 hover:bg-rose-500/10 hover:text-rose-200'
+          : 'text-slate-200 hover:bg-orange-500/10 hover:text-orange-300'
+      }`}
     >
-      <Icon className="w-3.5 h-3.5 text-slate-500" />
+      <Icon className={`w-3.5 h-3.5 ${danger ? 'text-rose-400/80' : 'text-slate-500'}`} />
       {label}
     </button>
   );
@@ -126,11 +158,82 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose }) => {
       }}
       onMouseDown={(e) => e.preventDefault()}
     >
-      <Item icon={Copy} label="Copy" action="copy" />
-      <Item icon={Scissors} label="Cut" action="cut" />
-      <Item icon={ClipboardPaste} label="Paste" action="paste" />
-      <div className="mx-2 my-1 border-t border-neutral-800" />
-      <Item icon={Maximize2} label="Select All" action="selectall" />
+      {variant === 'sidebar' && (
+        <>
+          <Item
+            icon={FolderPlus}
+            label="New Folder"
+            onClick={() => {
+              onClose();
+              onNewFolder?.();
+            }}
+          />
+          <Item
+            icon={FolderMinus}
+            label="Delete Folder…"
+            onClick={() => {
+              onClose();
+              onDeleteFolder?.();
+            }}
+          />
+        </>
+      )}
+
+      {variant === 'folder' && (
+        <>
+          <Item
+            icon={Pencil}
+            label="Rename Folder"
+            onClick={() => {
+              onClose();
+              onRenameFolder?.();
+            }}
+          />
+          <div className="mx-2 my-1 border-t border-neutral-800" />
+          <Item
+            icon={FolderMinus}
+            label="Delete Folder…"
+            danger
+            onClick={() => {
+              onClose();
+              onDeleteFolder?.('__current__');
+            }}
+          />
+        </>
+      )}
+
+      {variant === 'note' && (
+        <>
+          <Item
+            icon={Edit3}
+            label="Rename Note"
+            onClick={() => {
+              onClose();
+              onRenameNote?.();
+            }}
+          />
+          <div className="mx-2 my-1 border-t border-neutral-800" />
+          <Item
+            icon={Trash2}
+            label="Delete Note"
+            danger
+            onClick={() => {
+              onClose();
+              onDeleteNote?.();
+            }}
+          />
+        </>
+      )}
+
+      {variant === 'editor' && (
+        <>
+          <Item icon={Copy} label="Copy" onClick={() => runAction('copy')} />
+          <Item icon={Scissors} label="Cut" onClick={() => runAction('cut')} />
+          <Item icon={ClipboardPaste} label="Paste" onClick={() => runAction('paste')} />
+          <div className="mx-2 my-1 border-t border-neutral-800" />
+          <Item icon={Maximize2} label="Select All" onClick={() => runAction('selectall')} />
+        </>
+      )}
     </div>
   );
 };

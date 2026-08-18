@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
-import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Undo2, Info, Copy, Check } from 'lucide-react';
-import { NoteFile, WikiLink } from '../types';
+import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Undo2, Info, Copy, Check, Scissors, History as HistoryIcon, RotateCcw } from 'lucide-react';
+import { NoteFile, WikiLink, ReconstructedVersion } from '../types';
 import { segmentContent, extractWikiLinks, findBlockLine, findLinkAtOffset } from '../utils/markdownParser';
 import { formatNote } from '../utils/formatter';
+import { countH2Headings, planNoteSplit, sanitizeFolderName } from '../utils/splitter';
 import { LinkerToolbar } from './LinkerToolbar';
 import { LinkHub } from './LinkHub';
 import { ResizeHandle } from './ResizeHandle';
@@ -23,6 +24,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { appLogger } from '../services/appLogger';
+import { useDialog } from './DialogProvider';
 import {
   extractKeywords,
   findKeywordRanges,
@@ -341,6 +343,8 @@ interface EditorProps {
   onWikiLinkClick: (targetTitle: string, blockId?: string) => void;
   scrollRequest?: { blockId?: string; line?: number; ts: number } | null;
   semanticRefreshToken?: number;
+  /** Invoked after the note is split into sections (refresh notes + graph). */
+  onVaultChanged?: () => void;
 }
 
 export const Editor: React.FC<EditorProps> = ({
@@ -351,7 +355,9 @@ export const Editor: React.FC<EditorProps> = ({
   onWikiLinkClick,
   scrollRequest,
   semanticRefreshToken = 0,
+  onVaultChanged,
 }) => {
+  const { confirm } = useDialog();
   const [mode, setMode] = useState<'edit' | 'preview'>('preview');
   const [content, setContent] = useState('');
   const [isSaved, setIsSaved] = useState(true);
@@ -373,12 +379,22 @@ export const Editor: React.FC<EditorProps> = ({
     () => localStorage.getItem('cerebro_linkhub_visible') !== 'false'
   );
   const [showNoteMeta, setShowNoteMeta] = useState(false);
+  // Time Machine: version timeline for the active note (base snapshot + every
+  // delta, each reconstructed server-side).
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyVersions, setHistoryVersions] = useState<ReconstructedVersion[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<ReconstructedVersion | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   // Extraction metadata from the sidecar JSON the extractor writes into the
   // vault's "note metadata" folder (`<name>.md.meta.json`). Kept out of the
   // note body on purpose so it only ever surfaces in the Note Metadata modal.
   const [sidecarMeta, setSidecarMeta] = useState<{ source: string | null; extractionMethod: string | null } | null>(null);
   const [formatSnapshot, setFormatSnapshot] = useState<string | null>(null);
+  // Split-in-progress flag (the section files are created one at a time).
+  const [isSplitting, setIsSplitting] = useState(false);
   const [linkHubHeight, setLinkHubHeight] = useState(() => {
     const saved = Number(localStorage.getItem('cerebro_linkhub_height'));
     return Number.isFinite(saved) && saved > 0 ? saved : 220;
@@ -1348,6 +1364,10 @@ export const Editor: React.FC<EditorProps> = ({
       });
   };
 
+  // Number of `##` sections in the active note (code-fence aware) — gates the
+  // Split button, which needs at least 2 sections to be useful.
+  const h2Count = useMemo(() => countH2Headings(content), [content]);
+
   // Format the note: normalize headings/spacing and keep H1 in sync with title.
   const handleFormat = () => {
     if (!note) return;
@@ -1359,12 +1379,114 @@ export const Editor: React.FC<EditorProps> = ({
     tauriAPI.recordNoteVersion(note.path, formatted).catch(() => {});
   };
 
+  // Split the note into one new note per `##` section. The original note
+  // becomes an index of [[Section]] links; each section file lands in the same
+  // folder with an H1 + a [[Parent]] back-link. Writes are masked in Rust, so
+  // the vault refresh below (notes + graph) picks everything up in one pass.
+  const handleSplit = async () => {
+    if (!note || isSplitting) return;
+    const plan = planNoteSplit(content, note.title, allNotes.map((n) => n.path));
+    if (!plan) return;
+    const names = plan.sections.map((s) => s.title);
+    // Section notes go in a NEW subfolder named after the note, inside the
+    // source folder — the original note itself stays where it is.
+    const subfolder = sanitizeFolderName(note.title);
+    const ok = await confirm(
+      `Split this note into ${plan.sections.length} section notes?\n\n` +
+        names.map((n) => `• ${n}`).join('\n') +
+        `\n\nThey will be created in the \"${subfolder}\" folder (inside the note's folder).\nThe original note will become an index of links.`,
+      { title: 'Split note', confirmLabel: 'Split' }
+    );
+    if (!ok) return;
+
+    setIsSplitting(true);
+    try {
+      const folder = note.relativePath.includes('/')
+        ? note.relativePath.slice(0, note.relativePath.lastIndexOf('/'))
+        : '';
+      const sectionDir = folder ? `${folder}/${subfolder}` : subfolder;
+      for (const s of plan.sections) {
+        const rel = `${sectionDir}/${s.fileName}.md`;
+        const res = await tauriAPI.createFile({
+          vaultPath,
+          relativePath: rel,
+          content: s.content,
+        });
+        if (!res.success) throw new Error(res.error || `Failed to create ${rel}`);
+        appLogger.info(`Split: created ${rel}`);
+      }
+      // Replace the parent with the index of links (undoable via Undo Format).
+      setFormatSnapshot(content);
+      updateContent(plan.parentContent);
+      await onSaveContent(note.path, plan.parentContent);
+      tauriAPI.recordNoteVersion(note.path, plan.parentContent).catch(() => {});
+      onVaultChanged?.();
+    } catch (e) {
+      console.error('Split failed:', e);
+      appLogger.error('Split failed', e);
+    } finally {
+      setIsSplitting(false);
+    }
+  };
+
   const handleUndoFormat = () => {
     if (!note || formatSnapshot === null) return;
     updateContent(formatSnapshot);
     onSaveContent(note.path, formatSnapshot);
     tauriAPI.recordNoteVersion(note.path, formatSnapshot).catch(() => {});
     setFormatSnapshot(null);
+  };
+
+  // Time Machine: load the note's version timeline (base snapshot + every
+  // delta, each reconstructed to full content server-side) into the modal.
+  const loadHistory = useCallback(async () => {
+    if (!note) return;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const versions = await tauriAPI.getNoteVersionHistory(note.path);
+      setHistoryVersions(versions);
+      setSelectedVersion(versions[0] ?? null);
+    } catch (e) {
+      console.error('Failed to load version history:', e);
+      appLogger.error(`Failed to load version history for ${note.path}`, e);
+      setHistoryError(String(e));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [note]);
+
+  const openHistory = () => {
+    setShowHistory(true);
+    setSelectedVersion(null);
+    loadHistory();
+  };
+
+  // Restore an old version: write the reconstructed content over the file and
+  // swap it into the editor. The restore itself is also recorded as a new
+  // version so the pre-restore state stays recoverable.
+  const restoreVersion = async (version: ReconstructedVersion) => {
+    if (!note) return;
+    const ok = await confirm(
+      'Restore this version? The current note content will be replaced (a snapshot of it is kept in history).',
+      { title: 'Restore version', confirmLabel: 'Restore' }
+    );
+    if (!ok) return;
+    setRestoringVersion(true);
+    try {
+      const path = note.path;
+      await onSaveContent(path, version.content);
+      await tauriAPI.recordNoteVersion(path, version.content);
+      updateContent(version.content);
+      setShowHistory(false);
+      flashJumpStatus('Version restored');
+    } catch (e) {
+      console.error('Failed to restore version:', e);
+      appLogger.error(`Failed to restore version for ${note.path}`, e);
+      setHistoryError(String(e));
+    } finally {
+      setRestoringVersion(false);
+    }
   };
 
   // Space-optimized version history snapshot: flush any pending autosave for
@@ -1462,6 +1584,15 @@ export const Editor: React.FC<EditorProps> = ({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [showNoteMeta]);
+
+  useEffect(() => {
+    if (!showHistory) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowHistory(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showHistory]);
 
   // Load the extractor's sidecar metadata (<vault>/note metadata/<name>.md.meta.json)
   // when the modal opens. Non-existent sidecar (manual note) falls back to
@@ -1898,7 +2029,10 @@ const sidecarPath = (notePath: string): string => {
   };
 
   return (
-    <div className="editor-container relative flex-1 bg-slate-900/10 flex flex-col h-full overflow-hidden">
+    <div
+      data-region="editor"
+      className="editor-container relative flex-1 bg-slate-900/10 flex flex-col h-full overflow-hidden"
+    >
       
       {/* Find-in-note overlay */}
       {isSearchOpen && (
@@ -2042,11 +2176,30 @@ const sidecarPath = (notePath: string): string => {
             <Undo2 className="w-3.5 h-3.5" /> Undo
           </button>
           <button
+            onClick={handleSplit}
+            disabled={h2Count < 2 || isSplitting}
+            title={
+              h2Count < 2
+                ? 'Split note into sections — needs at least 2 ## headings'
+                : 'Split this note into separate notes (one per ## section)'
+            }
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all disabled:opacity-40 disabled:hover:text-slate-400 disabled:hover:border-slate-800"
+          >
+            <Scissors className="w-3.5 h-3.5" /> {isSplitting ? 'Splitting…' : 'Split'}
+          </button>
+          <button
             onClick={() => setShowNoteMeta(true)}
             title="View note metadata"
             className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
           >
             <Info className="w-3.5 h-3.5" /> Meta
+          </button>
+          <button
+            onClick={openHistory}
+            title="Time Machine: browse and restore older versions of this note"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+          >
+            <HistoryIcon className="w-3.5 h-3.5" /> History
           </button>
           <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
             <button
@@ -2292,6 +2445,114 @@ const sidecarPath = (notePath: string): string => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Time Machine: version history modal */}
+      {showHistory && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowHistory(false)}
+        >
+          <div
+            className="w-[720px] max-w-[94vw] h-[70vh] bg-slate-950 border border-slate-800 rounded-xl shadow-2xl overflow-hidden select-none flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/80 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400 shrink-0">
+                  <HistoryIcon className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-semibold text-slate-100 truncate">Time Machine — {note.title}</h3>
+              </div>
+              <button
+                onClick={() => setShowHistory(false)}
+                className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded-md transition-colors"
+                title="Close (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {historyError ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-red-400 px-6 text-center">
+                Failed to load version history: {historyError}
+              </div>
+            ) : historyLoading ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-500">Loading versions…</div>
+            ) : historyVersions.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+                No saved versions yet. Versions are snapshotted on explicit save (Ctrl/Cmd+S), when you switch notes,
+                and after quiet editing pauses — the original file is always kept as the base.
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 flex">
+                {/* Timeline list */}
+                <div className="w-[240px] shrink-0 border-r border-slate-800/80 overflow-y-auto">
+                  {historyVersions.map((v, i) => {
+                    const isCurrent = v.versionId === null && i === 0;
+                    const label = isCurrent
+                      ? 'Original version'
+                      : v.createdAt
+                        ? new Date(v.createdAt).toLocaleString()
+                        : `Version ${historyVersions.length - i}`;
+                    const selected = selectedVersion === v;
+                    return (
+                      <button
+                        key={v.versionId ?? 'base'}
+                        onClick={() => setSelectedVersion(v)}
+                        className={`w-full text-left px-3 py-2 border-b border-slate-800/40 transition-colors ${
+                          selected ? 'bg-orange-500/10 text-orange-300' : 'text-slate-400 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="text-[11px] font-medium truncate">{label}</div>
+                        <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                          {v.content.length.toLocaleString()} chars
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Preview + restore */}
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+                    {selectedVersion ? (
+                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-300">
+                        {selectedVersion.content.length > 20000
+                          ? selectedVersion.content.slice(0, 20000) + '\n… (preview truncated)'
+                          : selectedVersion.content}
+                      </pre>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-xs text-slate-500">
+                        Select a version on the left to preview it
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-4 py-3 border-t border-slate-800/80 flex items-center justify-end gap-2 shrink-0">
+                    <button
+                      onClick={() => setShowHistory(false)}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => selectedVersion && restoreVersion(selectedVersion)}
+                      disabled={!selectedVersion || restoringVersion}
+                      title={
+                        selectedVersion && selectedVersion.versionId === null
+                          ? 'Restore the original snapshot'
+                          : 'Restore this version (current content is snapshotted first)'
+                      }
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-orange-500/90 text-slate-950 hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:hover:bg-orange-500/90"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      {restoringVersion ? 'Restoring…' : 'Restore version'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

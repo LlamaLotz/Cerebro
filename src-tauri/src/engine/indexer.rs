@@ -13,7 +13,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use walkdir::WalkDir;
 
@@ -37,6 +37,17 @@ fn ignore_set() -> &'static Arc<RwLock<HashSet<PathBuf>>> {
     IGNORE_WRITES.get_or_init(|| Arc::new(RwLock::new(HashSet::new())))
 }
 
+/// Paths queued for un-masking, each with the deadline it becomes eligible.
+/// A single sweeper thread drains them, so bulk operations (H1 syncs, note
+/// splits) never spawn one thread per write (which piled up hundreds of
+/// sleeping threads — and gigabytes of stack — on multi-file operations).
+static PENDING_CLEARS: OnceLock<Mutex<Vec<(PathBuf, Instant)>>> = OnceLock::new();
+static SWEEPER_STARTED: OnceLock<()> = OnceLock::new();
+
+fn pending_clears() -> &'static Mutex<Vec<(PathBuf, Instant)>> {
+    PENDING_CLEARS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 /// Registers `path` as an app-initiated write so the watcher ignores it.
 pub fn mark_self_write(path: &Path) {
     ignore_set().write().unwrap().insert(path.to_path_buf());
@@ -54,13 +65,27 @@ pub fn clear_self_write(path: &Path) {
 
 /// Masks `path` and schedules its un-masking after `delay_ms`. The watcher
 /// drops the burst of self-write events immediately; the delayed clear
-/// re-arms watching for genuine external edits.
+/// re-arms watching for genuine external edits. Un-masking is handled by a
+/// single shared sweeper thread (never one thread per write).
 pub fn suppress_self_write(path: &Path, delay_ms: u64) {
     mark_self_write(path);
-    let path = path.to_path_buf();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(delay_ms));
-        clear_self_write(&path);
+    let deadline = Instant::now() + Duration::from_millis(delay_ms);
+    pending_clears().lock().unwrap().push((path.to_path_buf(), deadline));
+    SWEEPER_STARTED.get_or_init(|| {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_millis(50));
+            let mut pending = pending_clears().lock().unwrap();
+            let now = Instant::now();
+            pending.retain(|(path, deadline)| {
+                if *deadline <= now {
+                    clear_self_write(path);
+                    false
+                } else {
+                    true
+                }
+            });
+        });
+        ()
     });
 }
 
@@ -76,9 +101,25 @@ pub struct IndexedFile {
     pub updated_at: f64,
 }
 
-fn is_hidden(path: &Path) -> bool {
-    path.components()
-        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+/// Result of a full vault index: the note metadata plus every folder under
+/// the vault (POSIX-style relative paths, e.g. `Projects/Book`). Folders are
+/// included even when they contain no notes, so the sidebar can render the
+/// real folder structure — not just folders that happen to hold markdown.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexedVault {
+    pub files: Vec<IndexedFile>,
+    pub folders: Vec<String>,
+}
+
+/// True for paths the vault scan must skip: dot-prefixed segments (hidden
+/// files/folders) and the extractor's sidecar folder `note metadata/` (which
+/// is not a dot-folder, so it needs an explicit name match).
+pub fn is_hidden(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        s.starts_with('.') || s.eq_ignore_ascii_case("note metadata")
+    })
 }
 
 fn is_markdown(path: &Path) -> bool {
@@ -101,6 +142,30 @@ fn collect_markdown_paths(vault_path: &Path) -> Vec<PathBuf> {
     }
     paths.sort();
     paths
+}
+
+/// Streams the vault directory into a sorted list of POSIX-style relative
+/// folder paths (e.g. `Projects/Book`). Every non-hidden directory under the
+/// vault is included — including empty ones — so the sidebar can show the
+/// real folder tree even when a folder has no notes yet.
+fn collect_folder_paths(vault_path: &Path) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    for entry in WalkDir::new(vault_path).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() || is_hidden(path) {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(vault_path) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().to_string();
+        if rel.is_empty() {
+            continue; // the vault root itself
+        }
+        folders.push(rel.replace('\\', "/"));
+    }
+    folders.sort();
+    folders
 }
 
 fn file_metadata(vault_path: &Path, path: &Path) -> Option<IndexedFile> {
@@ -192,9 +257,10 @@ fn run_pool_with_conn<F>(
 pub fn index_vault(
     vault_path: &Path,
     app_handle: tauri::AppHandle,
-) -> Result<Vec<IndexedFile>, String> {
+) -> Result<IndexedVault, String> {
     let vault_root = vault_path.to_path_buf();
     let paths = collect_markdown_paths(&vault_root);
+    let folders = collect_folder_paths(&vault_root);
 
     // ---- Phase 1: upsert notes + aliases (bounded pool, transactional) ----
     let results: Arc<Mutex<Vec<IndexedFile>>> = Arc::new(Mutex::new(Vec::new()));
@@ -214,6 +280,11 @@ pub fn index_vault(
                 .unwrap_or_default();
             let aliases = crate::watcher::extract_aliases(&content);
             if db::upsert_note(conn, &path_str, &title, &path_str, &aliases).is_ok() {
+                // Reconcile topic tags with disk on every full scan: renamed or
+                // moved notes get a fresh id (path) here, and their tag rows
+                // would otherwise point at the old id until the next write or
+                // app restart (see `get_topic_groups` JOIN).
+                let _ = db::sync_note_tags(conn, &path_str, &content);
                 existing.lock().unwrap().insert(path_str.clone());
                 if let Some(meta) = file_metadata(&vault_root, path) {
                     results.lock().unwrap().push(meta);
@@ -260,5 +331,49 @@ pub fn index_vault(
 
     let mut out = results.lock().unwrap();
     out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
-    Ok(out.clone())
+    Ok(IndexedVault {
+        files: out.clone(),
+        folders,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn empty_folders_are_collected() {
+        // Temp vault with a nested folder that contains no markdown.
+        let dir = std::env::temp_dir().join(format!("cerebro_idx_test_{}", std::process::id()));
+        let root = dir.join("vault");
+        std::fs::create_dir_all(root.join("Projects/Empty")).unwrap();
+        std::fs::create_dir_all(root.join("Projects/Book")).unwrap();
+        std::fs::write(root.join("note.md"), "# note").unwrap();
+        std::fs::write(root.join("Projects/Book/ch1.md"), "# ch1").unwrap();
+        std::fs::create_dir_all(root.join(".obsidian")).unwrap();
+
+        let folders = collect_folder_paths(&root);
+        assert!(folders.contains(&"Projects".to_string()));
+        assert!(folders.contains(&"Projects/Empty".to_string()));
+        assert!(folders.contains(&"Projects/Book".to_string()));
+        // Hidden dirs are skipped.
+        assert!(!folders.iter().any(|f| f.contains(".obsidian")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hidden_and_metadata_paths_are_ignored() {
+        // Dot-prefixed segments are skipped.
+        assert!(is_hidden(Path::new("/vault/.obsidian/plugins/x.md")));
+        assert!(is_hidden(Path::new("/vault/.hidden.md")));
+        // The extractor's sidecar folder is skipped regardless of case.
+        assert!(is_hidden(Path::new("/vault/Books/note metadata/foo.md.meta.json")));
+        assert!(is_hidden(Path::new("/vault/note metadata/foo.md")));
+        assert!(is_hidden(Path::new("/vault/Note Metadata/foo.md")));
+        // Normal notes are not.
+        assert!(!is_hidden(Path::new("/vault/Books/foo.md")));
+        assert!(!is_hidden(Path::new("/vault/note.md")));
+    }
 }
