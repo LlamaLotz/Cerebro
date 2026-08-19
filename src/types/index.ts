@@ -64,11 +64,13 @@ export interface IndexedVault {
 // One entry in a note's version timeline: the original snapshot (versionId
 // null) or a later delta, reconstructed to its full content so the frontend
 // never has to apply patches.
+// Shape returned by `get_all_reconstructed_versions`: Tauri serializes Rust
+// struct fields as-is (snake_case), so these match the wire format exactly.
 export interface ReconstructedVersion {
-  notePath: string;
-  versionId: number | null;
+  note_path: string;
+  version_id: number | null;
   content: string;
-  createdAt: string;
+  created_at: string;
 }
 
 export interface AppSettings {

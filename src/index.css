@@ -11,6 +11,16 @@
   }
 }
 
+/* Hide scrollbars on horizontal scrubber tracks (ruler, tick strips) while
+   keeping them scrollable. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Custom scrollbar for dark theme */
 ::-webkit-scrollbar {
   width: 6px;
@@ -167,14 +177,33 @@
   border-radius: 2px;
 }
 
-/* "@Topic" keyword groups: visually distinct from wiki links (they're
-   groupings, not notes — and are never link-suggested by the engine) */
+/* "@Tag" mentions in the note: visually distinct from wiki links and from
+   local keywords (they're vault-wide groupings, not notes — and are never
+   link-suggested by the engine). Teal, to tell them apart from the yellow
+   ---keyword--- pills. */
 .topic-tag {
-  color: #fbbf24;
-  background-color: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: #2dd4bf;
+  background-color: rgba(45, 212, 191, 0.08);
+  border: 1px solid rgba(45, 212, 191, 0.3);
   border-radius: 9999px;
   padding: 0 6px;
+  font-size: 0.78em;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.4;
+}
+
+/* Hidden local keywords (`---kw---`): rendered as yellow pills in the editor,
+   matching the LinkHub keyword color so the same concept reads the same
+   everywhere. They stay hidden in preview mode (stripped by the formatter). */
+.keyword-tag {
+  color: #fbbf24;
+  background-color: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 9999px;
+  padding: 0 6px;
+  margin: 0 2px;
   font-size: 0.78em;
   font-weight: 600;
   display: inline-flex;

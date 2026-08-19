@@ -78,6 +78,23 @@ function buildGraphFromPayload(payload: GraphPayload): {
   return { nodes: Array.from(nodeMap.values()), links };
 }
 
+// Structural fingerprint of a graph snapshot: node identity/existence/degree
+// plus link endpoints (endpoints may be node object references after a force
+// library mutates the live data). Used by loadGraph to skip setGraphData when
+// a reload produced an identical vault graph — see loadGraph for why.
+function graphSignature(g: { nodes: GraphNode[]; links: GraphLink[] }): string {
+  const endpoint = (e: any) => (typeof e === 'object' && e !== null ? e.id ?? e.title ?? '' : e);
+  const nodes = g.nodes
+    .map((n) => `${n.id.toLowerCase()}|${n.exists ? 1 : 0}|${n.linksCount ?? 0}`)
+    .sort()
+    .join(';');
+  const links = g.links
+    .map((l) => `${String(endpoint(l.source)).toLowerCase()}->${String(endpoint(l.target)).toLowerCase()}`)
+    .sort()
+    .join(';');
+  return `${g.nodes.length}#${nodes}||${g.links.length}#${links}`;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   vaultPath: '',
   ingestionScript: 'python "/Users/Shiver/Documents/Cerebro/Extractor Final/master_extractor.py" --vault {vault_path}',
@@ -101,9 +118,11 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
   
-  // Layout views: 'editor' | 'graph' | 'split' | 'topics'
-  const [layout, setLayout] = useState<'editor' | 'graph' | 'split' | 'topics'>('split');
-  const [showAICoPilot, setShowAICoPilot] = useState(true);
+  // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
+  // the graph view (3D by default) with the AI panel minimized — the toolbar
+  // toggles both.
+  const [layout, setLayout] = useState<'editor' | 'graph' | 'split' | 'topics'>('graph');
+  const [showAICoPilot, setShowAICoPilot] = useState(false);
   // Requested block scroll (blockId or 1-based line + timestamp), passed to the Editor.
   const [scrollRequest, setScrollRequest] = useState<{ blockId?: string; line?: number; ts: number } | null>(null);
 
@@ -204,7 +223,21 @@ export default function App() {
   const loadGraph = () => {
     tauriAPI
       .getGraph()
-      .then((payload) => setGraphData(buildGraphFromPayload(payload)))
+      .then((payload) => {
+        const next = buildGraphFromPayload(payload);
+        setGraphData((prev) => {
+          // Skip identical snapshots. The graph is vault-wide, so note
+          // switches reload the exact same structure, and handing either
+          // graph pane a fresh object reference makes three-forcegraph /
+          // the 2D rebuild re-seed + re-heat the whole layout even though
+          // nothing changed — the graph visibly re-clumps on every note
+          // change. Compare a structural signature (identity/degree/links)
+          // rather than the object reference, since the force libraries
+          // mutate the live objects (x/y/z/fx/fy/fz) in place.
+          if (graphSignature(next) === graphSignature(prev)) return prev;
+          return next;
+        });
+      })
       .catch((e) => {
         console.error('Failed to load graph:', e);
         appLogger.error('Failed to load graph', e);
@@ -1083,6 +1116,7 @@ export default function App() {
                 : 'editor'
           }
           onNewFolder={handleNewFolder}
+          onNewNote={handleNewNote}
           // Generic sidebar background (no target): prompt for the folder. The
           // 'folder' variant passes '__current__' so the hovered path is used.
           onDeleteFolder={(folderPath) =>

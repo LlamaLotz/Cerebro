@@ -319,6 +319,12 @@ export const LinkHub: React.FC<LinkHubProps> = ({
                 {TAG_STYLES[kind].label}
               </span>
             ))}
+            {/* @Tag mentions in the note: teal, distinct from the yellow
+                local keywords above. */}
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[8px] font-bold uppercase tracking-wide bg-teal-500/10 text-teal-400 border-teal-500/30">
+              <Tag className="w-2.5 h-2.5" />
+              Tag
+            </span>
           </span>
           {isLoading && <span className="text-[10px] text-slate-500 italic">Scanning…</span>}
           <button

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { 
-  FolderOpen, FolderPlus, FolderMinus, Plus, Search, FileText, Trash2, Edit3, 
+  Folder, FolderOpen, FolderPlus, FolderMinus, Plus, Search, FileText, Trash2, Edit3, 
   RefreshCw, Terminal, Settings, ChevronRight, Play, PanelLeftClose,
   ArrowUp, ArrowDown, TerminalSquare
 } from 'lucide-react';
@@ -269,7 +269,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 isCollapsed ? '' : 'rotate-90'
               }`}
             />
-            <FolderOpen className={`w-4 h-4 shrink-0 ${isCollapsed ? 'text-slate-500' : 'text-orange-400/80'}`} />
+            {isCollapsed ? (
+              <Folder className="w-4 h-4 shrink-0 text-slate-500" />
+            ) : (
+              <FolderOpen className="w-4 h-4 shrink-0 text-orange-400/80" />
+            )}
             <span className="truncate font-medium">{folder.name}</span>
             <span className="text-[10px] text-slate-600 shrink-0 tabular-nums">
               {total} {total === 1 ? 'note' : 'notes'}

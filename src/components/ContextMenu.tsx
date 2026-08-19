@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { Copy, Scissors, ClipboardPaste, Maximize2, FolderPlus, FolderMinus, Edit3, Trash2, Pencil } from 'lucide-react';
+import { Copy, Scissors, ClipboardPaste, Maximize2, FolderPlus, FolderMinus, FilePlus, Edit3, Trash2, Pencil } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
@@ -7,13 +7,15 @@ interface ContextMenuProps {
   onClose: () => void;
   /**
    * What actions the menu shows:
-   *  - 'sidebar': vault folder actions (new / delete folder)
+   *  - 'sidebar': vault actions (new note / new folder) — no delete folder,
+   *    since there's no specific folder targeted
    *  - 'note': right-clicked a specific note (rename / delete note)
    *  - 'folder': right-clicked a specific folder (rename / delete folder)
    *  - 'editor': text-edit actions
    */
   variant: 'sidebar' | 'note' | 'folder' | 'editor';
   onNewFolder?: () => void;
+  onNewNote?: () => void;
   /** Delete a folder — no args = generic sidebar background (prompts for a
    *  path); the 'folder' variant receives the hovered folder's path. */
   onDeleteFolder?: (folderPath?: string) => void;
@@ -40,6 +42,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onClose,
   variant,
   onNewFolder,
+  onNewNote,
   onDeleteFolder,
   onRenameFolder,
   onRenameNote,
@@ -161,19 +164,19 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       {variant === 'sidebar' && (
         <>
           <Item
+            icon={FilePlus}
+            label="New Note"
+            onClick={() => {
+              onClose();
+              onNewNote?.();
+            }}
+          />
+          <Item
             icon={FolderPlus}
             label="New Folder"
             onClick={() => {
               onClose();
               onNewFolder?.();
-            }}
-          />
-          <Item
-            icon={FolderMinus}
-            label="Delete Folder…"
-            onClick={() => {
-              onClose();
-              onDeleteFolder?.();
             }}
           />
         </>

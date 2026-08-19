@@ -42,3 +42,10 @@ rayon = "1.10"
 # against; its build script predates the newer TLS feature requirement.
 ort-sys = "=2.0.0-rc.4"
 
+# Cerebro patch: vendored fastembed with the ONNX intra-op thread pool capped
+# at 2 threads. Stock fastembed spins up one thread per logical CPU, so the
+# embedding job that runs on every note save saturates all cores (~96% CPU
+# spike). See vendor/fastembed/src/text_embedding.rs.
+[patch.crates-io]
+fastembed = { path = "vendor/fastembed" }
+

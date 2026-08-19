@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
-import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Undo2, Info, Copy, Check, Scissors, History as HistoryIcon, RotateCcw } from 'lucide-react';
+import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Info, Copy, Check, Scissors, History as HistoryIcon, RotateCcw, Undo2, Redo2 } from 'lucide-react';
 import { NoteFile, WikiLink, ReconstructedVersion } from '../types';
 import { segmentContent, extractWikiLinks, findBlockLine, findLinkAtOffset } from '../utils/markdownParser';
 import { formatNote } from '../utils/formatter';
 import { countH2Headings, planNoteSplit, sanitizeFolderName } from '../utils/splitter';
 import { LinkerToolbar } from './LinkerToolbar';
 import { LinkHub } from './LinkHub';
+import { VersionHistoryRuler } from './VersionHistoryRuler';
 import { ResizeHandle } from './ResizeHandle';
 import { linkerService, LinkMention, BacklinkInfo, DeniedLink } from '../services/linkerService';
 import {
@@ -19,7 +20,7 @@ import { listen } from '@tauri-apps/api/event';
 import { tauriAPI } from '../types';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, Decoration, ViewUpdate, WidgetType } from '@codemirror/view';
 import { EditorState, StateEffect, StateField, Range, Text } from '@codemirror/state';
-import { history, historyKeymap, defaultKeymap, indentWithTab } from '@codemirror/commands';
+import { history, historyKeymap, defaultKeymap, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -295,15 +296,22 @@ const topicTagField = StateField.define<Range<Decoration>[]>({
   provide: (f) => EditorView.decorations.from(f, (v) => Decoration.set(v, true)),
 });
 
-// Hidden local keywords (`---kw---`): metadata managed from the LinkHub, so
-// the tokens are replaced with a zero-width widget in edit mode and never
-// shown in the note body. The raw text stays in the file (source of truth).
+// Hidden local keywords (`---kw---`): metadata managed from the LinkHub. The
+// raw text stays in the file (source of truth), but in edit mode the token is
+// replaced with a visible yellow pill (the keyword color), so declared
+// keywords read as keywords rather than vanishing (or showing raw dashes).
 class LocalKeywordWidget extends WidgetType {
-  eq() {
-    return true;
+  constructor(private keyword: string) {
+    super();
+  }
+  eq(other: LocalKeywordWidget) {
+    return other.keyword === this.keyword;
   }
   toDOM() {
-    return document.createElement('span');
+    const span = document.createElement('span');
+    span.className = 'keyword-tag';
+    span.textContent = this.keyword;
+    return span;
   }
   ignoreEvent() {
     return true;
@@ -318,7 +326,9 @@ const buildKeywordRanges = (doc: Text): Range<Decoration>[] => {
     let m: RegExpExecArray | null;
     while ((m = LOCAL_KEYWORD_TOKEN_RE.exec(line.text)) !== null) {
       const from = line.from + m.index;
-      ranges.push(Decoration.replace({ widget: new LocalKeywordWidget() }).range(from, from + m[0].length));
+      ranges.push(
+        Decoration.replace({ widget: new LocalKeywordWidget(m[1]) }).range(from, from + m[0].length)
+      );
     }
   }
   return ranges;
@@ -359,6 +369,9 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const { confirm } = useDialog();
   const [mode, setMode] = useState<'edit' | 'preview'>('preview');
+  // Bumped on every CodeMirror doc change so the toolbar Undo/Redo buttons
+  // re-evaluate their disabled state against the live history depth.
+  const [histTick, setHistTick] = useState(0);
   const [content, setContent] = useState('');
   const [isSaved, setIsSaved] = useState(true);
   const [dictionary, setDictionary] = useState<[string, string][]>([]);
@@ -431,6 +444,21 @@ export const Editor: React.FC<EditorProps> = ({
   const previewRef = useRef<HTMLDivElement | null>(null);
   const cmContainerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Edit Undo/Redo (CodeMirror history): the buttons call the real undo/redo
+  // commands (keyboard shortcuts already work via historyKeymap) and disable
+  // themselves when the history has nothing to undo/redo — and always in
+  // preview mode, where there's nothing to edit. Re-evaluated every render,
+  // and histTick forces a re-render after each doc change.
+  const canUndo = mode !== 'preview' && !!viewRef.current && undoDepth(viewRef.current.state) > 0;
+  const canRedo = mode !== 'preview' && !!viewRef.current && redoDepth(viewRef.current.state) > 0;
+  const handleUndo = () => {
+    const view = viewRef.current;
+    if (view && undo(view)) setHistTick((t) => t + 1);
+  };
+  const handleRedo = () => {
+    const view = viewRef.current;
+    if (view && redo(view)) setHistTick((t) => t + 1);
+  };
   // Authoritative latest content (mirrored in React state, refs, and the CM doc).
   const contentRef = useRef('');
   const dirtyRef = useRef(false);
@@ -483,6 +511,10 @@ export const Editor: React.FC<EditorProps> = ({
   }, []);
   // Find-in-note state (shared by edit/preview modes).
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  // Raw find-box text (updates instantly) vs the committed query: the full-doc
+  // match scan + decoration rebuild is expensive on large notes, so it only
+  // runs after the user pauses typing for SEARCH_DEBOUNCE_MS.
+  const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const [matches, setMatches] = useState<SearchMatch[]>([]);
@@ -554,14 +586,21 @@ export const Editor: React.FC<EditorProps> = ({
   // On (re)mount — i.e. when switching back to preview mode, the div is
   // recreated from scratch — restore the last scroll position so the viewport
   // doesn't reset to the start of the note.
+  // Only notes above MAX_FULL_RENDER_LINES are windowed; for everything else
+  // the scroll handler must NOT setState per frame — that would re-render the
+  // whole (fully rendered) note on every scroll tick and stutter scrolling.
+  const largeNoteRef = useRef(false);
+  largeNoteRef.current = lines.length > MAX_FULL_RENDER_LINES;
   useEffect(() => {
     const el = previewRef.current;
     if (!el || mode !== 'preview') return;
     el.scrollTop = previewScrollTopRef.current;
     const update = () => {
       previewScrollTopRef.current = el.scrollTop;
-      setPreviewScrollTop(el.scrollTop);
-      setPreviewViewportHeight(el.clientHeight);
+      if (largeNoteRef.current) {
+        setPreviewScrollTop(el.scrollTop);
+        setPreviewViewportHeight(el.clientHeight);
+      }
       // Manual scrolling (or the snap's own scroll event) ends the anchored
       // band; it follows the viewport again. No-op when already null.
       setWindowAnchorLine(null);
@@ -1124,6 +1163,15 @@ export const Editor: React.FC<EditorProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [isSearchOpen]);
 
+  // Debounce the committed query: each keystroke updates searchInput, but the
+  // scan/highlight (React matches + CodeMirror decorations) runs 1000ms after
+  // the last keystroke — otherwise typing in the find box rescans the entire
+  // (potentially multi-MB) document per key, spiking the CPU and temps.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 1000);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
   // Recompute the shared match list whenever the content, query or case flag
   // changes (keeps the counter + preview highlights in sync with the doc).
   useEffect(() => {
@@ -1179,6 +1227,7 @@ export const Editor: React.FC<EditorProps> = ({
 
   const closeSearch = useCallback(() => {
     setIsSearchOpen(false);
+    setSearchInput('');
     setSearchQuery('');
     setSearchCaseSensitive(false);
     setMatches([]);
@@ -1456,11 +1505,22 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }, [note]);
 
+  // History button toggles the version-history scrubber; loading the version
+  // list (and re-selecting the newest-kept default = base snapshot) happens
+  // only when opening.
   const openHistory = () => {
-    setShowHistory(true);
-    setSelectedVersion(null);
-    loadHistory();
+    setShowHistory((open) => {
+      if (!open) {
+        setSelectedVersion(null);
+        loadHistory();
+      }
+      return !open;
+    });
   };
+
+  // Scrub the ruler: the ruler reports the version now under its center
+  // pointer and the preview below it updates live.
+  const handleScrubVersion = (v: ReconstructedVersion) => setSelectedVersion(v);
 
   // Restore an old version: write the reconstructed content over the file and
   // swap it into the editor. The restore itself is also recorded as a new
@@ -1655,6 +1715,9 @@ const sidecarPath = (notePath: string): string => {
       EditorView.lineWrapping,
       EditorView.updateListener.of((u: ViewUpdate) => {
         if (!u.docChanged) return;
+        // Undo/redo depth changed (typing, undo, redo, programmatic edits) —
+        // refresh the toolbar buttons.
+        setHistTick((t) => t + 1);
         const doc = u.state.doc.toString();
         if (doc === contentRef.current) return; // programmatic sync, not typing
         contentRef.current = doc;
@@ -2040,11 +2103,14 @@ const sidecarPath = (notePath: string): string => {
           <Search className="w-3.5 h-3.5 text-orange-400 shrink-0" />
           <input
             ref={searchInputRef}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
+                // Flush the debounce so navigation applies to the text just
+                // typed instead of the previous (possibly empty) query.
+                setSearchQuery(searchInput);
                 if (e.shiftKey) goToMatch(-1);
                 else goToMatch(1);
               }
@@ -2128,7 +2194,7 @@ const sidecarPath = (notePath: string): string => {
         </div>
 
         {/* Edit / Preview Segmented Controller */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           <LinkerToolbar
             pendingCount={visibleSuggestions.total}
             isScanning={isScanning}
@@ -2137,44 +2203,28 @@ const sidecarPath = (notePath: string): string => {
             onScan={runScan}
             onToggleLinks={() => toggleLinkHub(!linkHubVisible)}
           />
-          <button
-            onClick={() => {
-              setIsSearchOpen(true);
-              requestAnimationFrame(() => {
-                const inp = searchInputRef.current;
-                if (inp) {
-                  inp.focus();
-                  inp.select();
-                }
-              });
-            }}
-            title="Find in note (Ctrl/Cmd+F)"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
-          >
-            <Search className="w-3.5 h-3.5" /> Find
-          </button>
-          <button
-            onClick={insertBlockAnchor}
-            title="Insert a block anchor (^id) on this paragraph and copy a [[Note#^id]] link"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
-          >
-            <Anchor className="w-3.5 h-3.5" /> Block
-          </button>
-          <button
-            onClick={handleFormat}
-            title="Format this note (normalize headings & spacing, sync H1 to filename)"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
-          >
-            <Wand2 className="w-3.5 h-3.5" /> Format
-          </button>
-          <button
-            onClick={handleUndoFormat}
-            disabled={formatSnapshot === null}
-            title="Undo the last formatting action"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all disabled:opacity-40 disabled:hover:text-slate-400 disabled:hover:border-slate-800"
-          >
-            <Undo2 className="w-3.5 h-3.5" /> Undo
-          </button>
+          {/* Edit Undo/Redo: wired to the real CodeMirror history (the same
+              commands the Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z shortcuts use), so
+              button clicks undo/redo actual edits and the group disables
+              itself when the history is empty at one end. */}
+          <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              title="Undo last edit: Revert the most recent change to this note. Shortcut: Ctrl/Cmd+Z"
+              className="p-1.5 rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo}
+              title="Redo edit: Re-apply the change you just undid. Shortcut: Ctrl/Cmd+Shift+Z"
+              className="p-1.5 rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <button
             onClick={handleSplit}
             disabled={h2Count < 2 || isSplitting}
@@ -2188,18 +2238,58 @@ const sidecarPath = (notePath: string): string => {
             <Scissors className="w-3.5 h-3.5" /> {isSplitting ? 'Splitting…' : 'Split'}
           </button>
           <button
-            onClick={() => setShowNoteMeta(true)}
-            title="View note metadata"
+            onClick={insertBlockAnchor}
+            title="Insert a block anchor (^id) on this paragraph and copy a [[Note#^id]] link"
             className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
           >
-            <Info className="w-3.5 h-3.5" /> Meta
+            <Anchor className="w-3.5 h-3.5" /> Block
+          </button>
+          <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
+            <button
+              onClick={handleFormat}
+              title="Format this note (normalize headings & spacing, sync H1 to filename)"
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-orange-400 transition-all"
+            >
+              <Wand2 className="w-3.5 h-3.5" /> Format
+            </button>
+            <button
+              onClick={handleUndoFormat}
+              disabled={formatSnapshot === null}
+              title="Undo the last formatting action"
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Undo
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setIsSearchOpen(true);
+              requestAnimationFrame(() => {
+                const inp = searchInputRef.current;
+                if (inp) {
+                  inp.focus();
+                  inp.select();
+                }
+              });
+            }}
+            title="Find in note: Search within the current note's text. Enter jumps to the next match, Shift+Enter to the previous one, Esc closes the search. Shortcut: Ctrl/Cmd+F"
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setShowNoteMeta(true)}
+            title="Note metadata: View title, file path, modified time, line / word / character counts, links and keywords for this note."
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+          >
+            <Info className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={openHistory}
-            title="Time Machine: browse and restore older versions of this note"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+            title="Time Machine: Browse autosaved snapshots of this note and restore any older version."
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
           >
-            <HistoryIcon className="w-3.5 h-3.5" /> History
+            <HistoryIcon className="w-3.5 h-3.5" />
           </button>
           <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
             <button
@@ -2207,23 +2297,25 @@ const sidecarPath = (notePath: string): string => {
                 forceSave();
                 setMode('preview');
               }}
-              className={`flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              title="Preview mode: Render this note as formatted markdown — headings, lists, links and tags. Saves before switching."
+              className={`p-1.5 rounded-md transition-all ${
                 mode === 'preview'
                   ? 'bg-slate-800 text-orange-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Eye className="w-3.5 h-3.5" /> Preview
+              <Eye className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => setMode('edit')}
-              className={`flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              title="Edit mode: Switch to the raw markdown editor."
+              className={`p-1.5 rounded-md transition-all ${
                 mode === 'edit'
                   ? 'bg-slate-800 text-orange-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Edit2 className="w-3.5 h-3.5" /> Edit
+              <Edit2 className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -2248,7 +2340,18 @@ const sidecarPath = (notePath: string): string => {
               (() => {
                 const totalLines = lines.length;
                 const totalHeight = totalLines * PREVIEW_LINE_HEIGHT;
-                const windowed = previewViewportHeight > 0 && !fullRender;
+                // Windowed band rendering only pays off on genuinely huge
+                // notes (multi-MB / 10k+ lines). On ordinary notes the
+                // 28px/line estimate drifts badly from real rendered heights
+                // (headings, lists and code blocks render far taller), so as
+                // the band scrolls, real content gets replaced by shorter
+                // estimates, the scroll area shrinks, and scrollTop is
+                // clamped back up — the note can't reach its real bottom and
+                // the viewport snaps upward. Rendering notes up to
+                // MAX_FULL_RENDER_LINES fully keeps real heights end-to-end:
+                // exact scrollbar, bottom always reachable.
+                const windowed =
+                  previewViewportHeight > 0 && !fullRender && totalLines > MAX_FULL_RENDER_LINES;
                 let start: number;
                 let end: number;
                 if (windowed) {
@@ -2273,6 +2376,11 @@ const sidecarPath = (notePath: string): string => {
                 } else {
                   start = 0;
                   end = totalLines;
+                }
+                if (!windowed) {
+                  // Full render: no estimated-height wrapper — real content
+                  // heights give an exact scrollbar and a reachable bottom.
+                  return renderMarkdown(lines.slice(start, end), start);
                 }
                 return (
                   <div
@@ -2451,110 +2559,17 @@ const sidecarPath = (notePath: string): string => {
 
       {/* Time Machine: version history modal */}
       {showHistory && (
-        <div
-          className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setShowHistory(false)}
-        >
-          <div
-            className="w-[720px] max-w-[94vw] h-[70vh] bg-slate-950 border border-slate-800 rounded-xl shadow-2xl overflow-hidden select-none flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/80 shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400 shrink-0">
-                  <HistoryIcon className="w-4 h-4" />
-                </div>
-                <h3 className="text-sm font-semibold text-slate-100 truncate">Time Machine — {note.title}</h3>
-              </div>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded-md transition-colors"
-                title="Close (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {historyError ? (
-              <div className="flex-1 flex items-center justify-center text-xs text-red-400 px-6 text-center">
-                Failed to load version history: {historyError}
-              </div>
-            ) : historyLoading ? (
-              <div className="flex-1 flex items-center justify-center text-xs text-slate-500">Loading versions…</div>
-            ) : historyVersions.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
-                No saved versions yet. Versions are snapshotted on explicit save (Ctrl/Cmd+S), when you switch notes,
-                and after quiet editing pauses — the original file is always kept as the base.
-              </div>
-            ) : (
-              <div className="flex-1 min-h-0 flex">
-                {/* Timeline list */}
-                <div className="w-[240px] shrink-0 border-r border-slate-800/80 overflow-y-auto">
-                  {historyVersions.map((v, i) => {
-                    const isCurrent = v.versionId === null && i === 0;
-                    const label = isCurrent
-                      ? 'Original version'
-                      : v.createdAt
-                        ? new Date(v.createdAt).toLocaleString()
-                        : `Version ${historyVersions.length - i}`;
-                    const selected = selectedVersion === v;
-                    return (
-                      <button
-                        key={v.versionId ?? 'base'}
-                        onClick={() => setSelectedVersion(v)}
-                        className={`w-full text-left px-3 py-2 border-b border-slate-800/40 transition-colors ${
-                          selected ? 'bg-orange-500/10 text-orange-300' : 'text-slate-400 hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <div className="text-[11px] font-medium truncate">{label}</div>
-                        <div className="text-[10px] text-slate-500 truncate mt-0.5">
-                          {v.content.length.toLocaleString()} chars
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* Preview + restore */}
-                <div className="flex-1 min-w-0 flex flex-col">
-                  <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-                    {selectedVersion ? (
-                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-300">
-                        {selectedVersion.content.length > 20000
-                          ? selectedVersion.content.slice(0, 20000) + '\n… (preview truncated)'
-                          : selectedVersion.content}
-                      </pre>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-xs text-slate-500">
-                        Select a version on the left to preview it
-                      </div>
-                    )}
-                  </div>
-                  <div className="px-4 py-3 border-t border-slate-800/80 flex items-center justify-end gap-2 shrink-0">
-                    <button
-                      onClick={() => setShowHistory(false)}
-                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => selectedVersion && restoreVersion(selectedVersion)}
-                      disabled={!selectedVersion || restoringVersion}
-                      title={
-                        selectedVersion && selectedVersion.versionId === null
-                          ? 'Restore the original snapshot'
-                          : 'Restore this version (current content is snapshotted first)'
-                      }
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-orange-500/90 text-slate-950 hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:hover:bg-orange-500/90"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      {restoringVersion ? 'Restoring…' : 'Restore version'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <VersionHistoryRuler
+          noteTitle={note.title}
+          versions={historyVersions}
+          selectedVersion={selectedVersion}
+          loading={historyLoading}
+          error={historyError}
+          restoring={restoringVersion}
+          onScrub={handleScrubVersion}
+          onRestore={(v) => restoreVersion(v)}
+          onClose={() => setShowHistory(false)}
+        />
       )}
 
     </div>

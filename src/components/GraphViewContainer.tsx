@@ -23,8 +23,10 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
   activeNote,
   onSelectNoteByTitle,
 }) => {
+  // Default to 3D; a user who explicitly picked 2D (key stored) keeps their
+  // choice.
   const [graphMode, setGraphMode] = useState<'2d' | '3d'>(
-    () => (localStorage.getItem(GRAPH_MODE_KEY) === '3d' ? '3d' : '2d')
+    () => (localStorage.getItem(GRAPH_MODE_KEY) === '2d' ? '2d' : '3d')
   );
 
   const switchMode = (mode: '2d' | '3d') => {
