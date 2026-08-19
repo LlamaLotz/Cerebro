@@ -30,7 +30,11 @@ const HNSW_EF_SEARCH: usize = 128;
 /// panel shows an empty state instead of junk suggestions. Tuned up to 0.75 to
 /// kill false positives on short notes whose token-average embeddings skim
 /// close to anything.
-const MIN_SIMILARITY_SCORE: f32 = 0.70;
+///
+/// This is the historical default; the live value is runtime-tunable via the
+/// `linking.similarityThreshold` setting (see config.rs, which reads this
+/// constant as its own default).
+pub const MIN_SIMILARITY_SCORE: f32 = 0.70;
 
 /// Number of the active note's own blocks used as topical query units when
 /// searching for related notes/blocks. A long note's whole-document embedding
@@ -40,7 +44,9 @@ const MIN_SIMILARITY_SCORE: f32 = 0.70;
 const QUERY_UNIT_LIMIT: usize = 8;
 
 /// Number of texts fed to the model per inference pass during backfill.
-const BACKFILL_BATCH_SIZE: usize = 16;
+/// Historical default; the live value is runtime-tunable via the
+/// `linking.embeddingBatchSize` setting (see config.rs).
+pub const BACKFILL_BATCH_SIZE: usize = 16;
 
 /// Minimum characters for a block to stand on its own. Smaller blocks are
 /// merged into a neighbour so long notes don't fragment into thousands of
@@ -142,10 +148,14 @@ struct EmbeddingIndex {
     /// note_id -> current external id
     id_map: HashMap<String, usize>,
     stale_count: usize,
+    /// Minimum cosine similarity for a match to surface (runtime-tunable via
+    /// the `linking.similarityThreshold` setting; defaults to the old
+    /// MIN_SIMILARITY_SCORE constant).
+    min_similarity: f32,
 }
 
 impl EmbeddingIndex {
-    fn from_embeddings(entries: Vec<(String, Vec<f32>)>) -> Self {
+    fn from_embeddings(entries: Vec<(String, Vec<f32>)>, min_similarity: f32) -> Self {
         let pairs: Vec<(&Vec<f32>, usize)> = entries
             .iter()
             .enumerate()
@@ -169,6 +179,7 @@ impl EmbeddingIndex {
             points,
             id_map,
             stale_count: 0,
+            min_similarity,
         }
     }
 
@@ -244,8 +255,10 @@ impl EmbeddingIndex {
 
         // Enforce the similarity threshold with no fallback: below-threshold
         // neighbours are noise and surfacing them is exactly the "inaccurate
-        // suggestions" complaint. An empty list is the honest answer.
-        let best = self.collect_matches(&candidates, exclude_note_id, Some(MIN_SIMILARITY_SCORE));
+        // suggestions" complaint. An empty list is the honest answer. The
+        // threshold is runtime-tunable (linking.similarityThreshold setting).
+        let best =
+            self.collect_matches(&candidates, exclude_note_id, Some(self.min_similarity));
 
         let mut matches: Vec<SemanticMatch> = best
             .into_iter()
@@ -406,19 +419,32 @@ pub struct EmbeddingEngine {
     model: TextEmbedding,
     index: Mutex<EmbeddingIndex>,
     blocks: Mutex<Vec<BlockEntry>>,
+    /// Runtime-tunable similarity threshold (was the MIN_SIMILARITY_SCORE
+    /// constant). Mirrored onto the index at init and on config save.
+    min_similarity: Mutex<f32>,
+    /// Runtime-tunable backfill batch size (was BACKFILL_BATCH_SIZE).
+    backfill_batch_size: Mutex<usize>,
 }
 
 impl EmbeddingEngine {
     /// Loads the bge-base-en-v1.5 model (downloaded to `~/.cerebro/models` on
     /// first run, fully offline afterwards) and rebuilds the HNSW index from
-    /// SQLite.
-    pub fn new(conn: &Connection, cache_dir: PathBuf) -> Result<Self, String> {
+    /// SQLite. Runtime-tunable parameters (similarity threshold, embedding
+    /// threads/batch) are read from the persisted runtime config.
+    pub fn new(
+        conn: &Connection,
+        cache_dir: PathBuf,
+        config: &crate::config::RuntimeConfig,
+    ) -> Result<Self, String> {
         let options = InitOptions {
             model_name: EmbeddingModel::BGEBaseENV15Q,
             execution_providers: Default::default(),
             max_length: 512,
             cache_dir,
             show_download_progress: false,
+            // ONNX intra-op thread cap — baked into the session at init, so a
+            // thread-count change takes effect on next launch.
+            intra_op_threads: Some(config.linking.embedding_threads.clamp(1, 64)),
         };
 
         let model = TextEmbedding::try_new(options).map_err(|e| e.to_string())?;
@@ -459,7 +485,8 @@ impl EmbeddingEngine {
                 }
             })
             .collect();
-        let index = EmbeddingIndex::from_embeddings(entries);
+        let min_similarity = config.linking.similarity_threshold.clamp(0.0, 1.0);
+        let index = EmbeddingIndex::from_embeddings(entries, min_similarity);
 
         let blocks = load_all_block_embeddings(conn)?
             .into_iter()
@@ -475,7 +502,28 @@ impl EmbeddingEngine {
             model,
             index: Mutex::new(index),
             blocks: Mutex::new(blocks),
+            min_similarity: Mutex::new(min_similarity),
+            backfill_batch_size: Mutex::new(config.linking.embedding_batch_size.max(1)),
         })
+    }
+
+    /// Current similarity threshold used to gate semantic matches.
+    pub fn min_similarity(&self) -> f32 {
+        *self.min_similarity.lock().unwrap()
+    }
+
+    /// Hot-applies live-tunable embedding parameters from a config save
+    /// without rebuilding the engine. Thread count is NOT applied here — it's
+    /// baked into the ONNX session at init and takes effect on next launch.
+    pub fn apply_runtime_config(&self, config: &crate::config::RuntimeConfig) {
+        let threshold = config.linking.similarity_threshold.clamp(0.0, 1.0);
+        let batch = config.linking.embedding_batch_size.max(1);
+        *self.min_similarity.lock().unwrap() = threshold;
+        *self.backfill_batch_size.lock().unwrap() = batch;
+        self.index.lock().unwrap().min_similarity = threshold;
+        println!(
+            "[embeddings] applied runtime config: similarity_threshold={threshold}, backfill_batch={batch}"
+        );
     }
 
     /// Embeds `texts` in small serial batches so fastembed's rayon
@@ -653,15 +701,16 @@ impl EmbeddingEngine {
         pending: Vec<(String, String)>,
     ) -> Result<usize, String> {
         let mut count = 0usize;
+        let batch_size = *self.backfill_batch_size.lock().unwrap();
         let eligible: Vec<&(String, String)> = pending
             .iter()
             .filter(|(_, content)| is_embeddable_content(content) && !is_oversized(content))
             .collect();
-        for chunk in eligible.chunks(BACKFILL_BATCH_SIZE) {
+        for chunk in eligible.chunks(batch_size) {
             let texts: Vec<String> = chunk.iter().map(|(_, content)| content.clone()).collect();
             let embeddings = self
                 .model
-                .embed(texts, Some(BACKFILL_BATCH_SIZE))
+                .embed(texts, Some(batch_size))
                 .map_err(|e| e.to_string())?;
 
             let mut index = self.index.lock().unwrap();
@@ -896,7 +945,7 @@ impl EmbeddingEngine {
                         continue;
                     }
                     let score = cosine_similarity(unit, &b.vector);
-                    if score < MIN_SIMILARITY_SCORE {
+                    if score < self.min_similarity() {
                         continue;
                     }
                     let entry = best
@@ -987,6 +1036,20 @@ impl EmbeddingEngine {
         index.append(&mut new_blocks);
         Ok(count)
     }
+}
+
+/// Hot-applies live-tunable embedding parameters (similarity threshold,
+/// backfill batch size) to the cached engine after a config save. Thread
+/// count is applied at engine init (baked into the ONNX session), so it takes
+/// effect on next launch. Safe to call even when the engine hasn't loaded yet.
+pub fn apply_embedding_runtime_config(
+    state: &crate::AppState,
+    config: &crate::config::RuntimeConfig,
+) -> Result<(), String> {
+    if let Some(Ok(engine)) = state.embeddings.lock().unwrap().as_ref() {
+        engine.apply_runtime_config(config);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

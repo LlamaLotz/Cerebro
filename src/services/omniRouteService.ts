@@ -16,7 +16,13 @@ export function getAIClient(config: OmniRouteConfig): OpenAI | null {
 }
 
 /**
- * Sends a generic chat request to the AI using OmniRoute
+ * Sends a generic chat request to the AI using OmniRoute.
+ *
+ * Honors the runtime config: the chat `temperature` is sent with every
+ * request, and when `injectUserProfile` is enabled (with a non-empty
+ * `userProfile`), the profile is prepended as an extra system message so the
+ * model knows who it's helping — for the free-form chat AND every quick action
+ * (they all funnel through this function).
  */
 export async function sendChatMessage(
   config: OmniRouteConfig,
@@ -27,11 +33,19 @@ export async function sendChatMessage(
     throw new Error('AI is not configured. Please enter your OmniRoute API Key and Base URL in settings.');
   }
 
+  const fullMessages = [...messages];
+  if (config.injectUserProfile && config.userProfile?.trim()) {
+    fullMessages.unshift({
+      role: 'system',
+      content: `User profile (who you are helping):\n${config.userProfile.trim()}`,
+    });
+  }
+
   try {
     const response = await client.chat.completions.create({
       model: config.model || 'gpt-4o',
-      messages,
-      temperature: 0.7,
+      messages: fullMessages,
+      temperature: config.temperature ?? 0.7,
     });
 
     return response.choices[0]?.message?.content || 'No response from AI.';

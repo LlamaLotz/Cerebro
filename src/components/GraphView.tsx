@@ -22,6 +22,10 @@ interface GraphViewProps {
   onSelectNoteByTitle: (title: string) => void;
   /** Extra toolbar controls injected by the container (2D/3D mode toggle). */
   toolbarExtra?: React.ReactNode;
+  /** Appearance setting: grid / mesh / solid backdrop behind the graph. */
+  backgroundPattern?: 'grid' | 'mesh' | 'solid';
+  /** Linking setting: whether dragged node positions are persisted. */
+  persistNodePositions?: boolean;
 }
 
 export const GraphView: React.FC<GraphViewProps> = ({
@@ -29,6 +33,8 @@ export const GraphView: React.FC<GraphViewProps> = ({
   activeNote,
   onSelectNoteByTitle,
   toolbarExtra,
+  backgroundPattern = 'grid',
+  persistNodePositions = true,
 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -37,6 +43,10 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Latest fit-all-nodes function, exposed for the header reset button so it
   // can refit once its re-animation settles.
   const fitAllNodesRef = useRef<() => void>(() => {});
+  // The backdrop <rect> lives inside the zoomed group so the grid/mesh pattern
+  // pans and zooms WITH the graph. Kept in a ref so the Appearance setting can
+  // swap the pattern in place without re-running the whole force layout.
+  const bgRectRef = useRef<d3.Selection<SVGRectElement, unknown, null, undefined> | null>(null);
 
   const POSITIONS_KEY = 'cerebro_graph_positions';
 
@@ -57,6 +67,9 @@ export const GraphView: React.FC<GraphViewProps> = ({
   };
 
   const savePositions = (nodes: any[]) => {
+    // Disabled via the Linking setting "persist node positions" — the graph
+    // then re-lays out fresh on every open.
+    if (!persistNodePositions) return;
     const positions: Record<string, { x: number; y: number }> = {};
     for (const n of nodes) {
       if (Number.isFinite(n.x) && Number.isFinite(n.y) && (n.x !== 0 || n.y !== 0)) {
@@ -165,6 +178,59 @@ export const GraphView: React.FC<GraphViewProps> = ({
     // 2. Container group for zoom & pan
     const gContainer = svg.append('g').attr('class', 'graph-container');
 
+    // Background: drawn INSIDE the zoomed group (not as a static CSS backdrop
+    // on the pane) so the grid/mesh pattern pans and zooms WITH the graph —
+    // the old screen-space pattern stayed fixed while the graph moved under
+    // it, which read as nausea when panning/zooming. A huge rect filled by an
+    // SVG pattern that tiles in user space follows the zoom transform exactly
+    // like the nodes and links do.
+    const EXTENT = 100000;
+    const defs = svg.append('defs');
+
+    const gridPattern = defs
+      .append('pattern')
+      .attr('id', 'graph-bg-grid-pattern')
+      .attr('width', 42)
+      .attr('height', 42)
+      .attr('patternUnits', 'userSpaceOnUse');
+    gridPattern
+      .append('path')
+      .attr('d', 'M 42 0 L 0 0 0 42')
+      .attr('fill', 'none')
+      .attr('stroke', 'rgba(148, 163, 184, 0.14)')
+      .attr('stroke-width', 1);
+
+    const meshPattern = defs
+      .append('pattern')
+      .attr('id', 'graph-bg-mesh-pattern')
+      .attr('width', 26)
+      .attr('height', 26)
+      .attr('patternUnits', 'userSpaceOnUse');
+    meshPattern
+      .append('circle')
+      .attr('cx', 1.2)
+      .attr('cy', 1.2)
+      .attr('r', 1.2)
+      .attr('fill', 'rgba(148, 163, 184, 0.25)');
+
+    const bgRect = gContainer
+      .append('rect')
+      .attr('class', 'graph-bg-rect')
+      .attr('x', -EXTENT)
+      .attr('y', -EXTENT)
+      .attr('width', EXTENT * 2)
+      .attr('height', EXTENT * 2)
+      .attr('pointer-events', 'none')
+      .attr(
+        'fill',
+        backgroundPattern === 'grid'
+          ? 'url(#graph-bg-grid-pattern)'
+          : backgroundPattern === 'mesh'
+            ? 'url(#graph-bg-mesh-pattern)'
+            : 'none'
+      );
+    bgRectRef.current = bgRect;
+
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.15, 3.5])
       .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
@@ -216,7 +282,13 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .call(
         d3.drag<SVGGElement, any>()
           .on('start', (event: any, d: any) => {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
+            // Reheat the simulation IMMEDIATELY (not just via the slow alpha
+            // climb from a cold stop), so nodes connected to the grabbed one
+            // follow the drag as it moves — the grabbed node alone sliding
+            // over a frozen graph read as "connected nodes can't move".
+            if (!event.active) {
+              simulation.alphaTarget(0.3).alpha(Math.max(simulation.alpha(), 0.3)).restart();
+            }
             d.fx = d.x;
             d.fy = d.y;
           })
@@ -382,6 +454,21 @@ export const GraphView: React.FC<GraphViewProps> = ({
       simulation.stop();
     };
   }, [graphData, activeNote]);
+
+  // Swap the backdrop pattern in place when the Appearance setting changes —
+  // no need to re-seed or re-run the force layout for a cosmetic change.
+  useEffect(() => {
+    const rect = bgRectRef.current;
+    if (!rect) return;
+    rect.attr(
+      'fill',
+      backgroundPattern === 'grid'
+        ? 'url(#graph-bg-grid-pattern)'
+        : backgroundPattern === 'mesh'
+          ? 'url(#graph-bg-mesh-pattern)'
+          : 'none'
+    );
+  }, [backgroundPattern]);
 
   // Header Manual Reset Button
   const handleResetGraph = () => {

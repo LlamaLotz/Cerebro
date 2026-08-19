@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 use tauri::{Manager, Window, Emitter};
 use rusqlite::params;
 
+mod config;
 mod db;
 mod engine;
 pub mod linker;
@@ -170,9 +171,12 @@ fn get_embedding_engine(
     let cache_dir = home.join(".cerebro").join("models");
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
 
+    // Runtime-tunable embedding parameters (similarity threshold, threads,
+    // batch size) come from the persisted config.
+    let runtime_config = config::load_runtime_config(app_handle).unwrap_or_default();
     let result = verify_model_cache(&cache_dir)
         .and_then(|_| {
-            EmbeddingEngine::new(&conn, cache_dir).map_err(|e| {
+            EmbeddingEngine::new(&conn, cache_dir, &runtime_config).map_err(|e| {
                 format!(
                     "{e} - the local embedding model could not be loaded; \
                      a one-time internet connection may be required to download it."
@@ -1225,6 +1229,41 @@ fn get_all_reconstructed_versions(
     db::history::get_all_reconstructed_versions(&conn, &note_path)
 }
 
+// --- Runtime config bridge --------------------------------------------------
+
+/// Returns the persisted runtime config, or `None` on first run (no
+/// `~/.cerebro/settings.json` yet) so the frontend can migrate legacy
+/// localStorage settings before saving.
+#[tauri::command]
+fn get_runtime_config(app: tauri::AppHandle) -> Option<config::RuntimeConfig> {
+    config::load_runtime_config(&app)
+}
+
+/// Persists the runtime config to disk and hot-applies the live-tunable
+/// embedding parameters (similarity threshold, backfill batch) to the cached
+/// engine without a restart.
+#[tauri::command]
+fn save_runtime_config(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    config: config::RuntimeConfig,
+) -> Result<(), String> {
+    config::save_runtime_config(&app, &config)?;
+    crate::engine::embeddings::apply_embedding_runtime_config(&state, &config)?;
+    Ok(())
+}
+
+/// Purges version-history rows older than `retention_days` (0 = keep all).
+/// Invoked on startup and whenever the retention setting changes.
+#[tauri::command]
+fn purge_expired_history(
+    app_handle: tauri::AppHandle,
+    retention_days: u64,
+) -> Result<usize, String> {
+    let conn = db::init_db(&app_handle)?;
+    db::history::purge_expired_history(&conn, retention_days)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1289,7 +1328,10 @@ pub fn run() {
             record_note_version,
             reconstruct_note_version,
             get_note_history,
-            get_all_reconstructed_versions
+            get_all_reconstructed_versions,
+            get_runtime_config,
+            save_runtime_config,
+            purge_expired_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

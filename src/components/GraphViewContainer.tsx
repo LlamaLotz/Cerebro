@@ -9,6 +9,18 @@ interface GraphViewContainerProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   activeNote: NoteFile | null;
   onSelectNoteByTitle: (title: string) => void;
+  /** Appearance setting: which backdrop pattern the graph pane draws. */
+  backgroundPattern: 'grid' | 'mesh' | 'solid';
+  /** Appearance setting: the 2D/3D mode to open in (unless the user has
+   *  explicitly picked one before — that choice is persisted and wins). */
+  defaultGraphMode: '2d' | '3d';
+  /** Linking setting: whether the 2D graph persists dragged node positions. */
+  persistNodePositions: boolean;
+  /** Appearance settings: auto-rotate the 3D camera on load + its speed. */
+  autoRotateOnLoad: boolean;
+  autoRotateSpeed: number;
+  /** Appearance setting: 3D label billboard DPI ('high' = up to 3x, crisp). */
+  labelQuality: 'standard' | 'high';
 }
 
 /**
@@ -22,11 +34,21 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
   graphData,
   activeNote,
   onSelectNoteByTitle,
+  backgroundPattern = 'grid',
+  defaultGraphMode = '3d',
+  persistNodePositions = true,
+  autoRotateOnLoad = false,
+  autoRotateSpeed = 0.67,
+  labelQuality = 'high',
 }) => {
-  // Default to 3D; a user who explicitly picked 2D (key stored) keeps their
-  // choice.
+  // Open in the configured default mode; a user who explicitly picked a mode
+  // before (key stored) keeps their choice.
   const [graphMode, setGraphMode] = useState<'2d' | '3d'>(
-    () => (localStorage.getItem(GRAPH_MODE_KEY) === '2d' ? '2d' : '3d')
+    () =>
+      (localStorage.getItem(GRAPH_MODE_KEY) === '2d' ||
+      localStorage.getItem(GRAPH_MODE_KEY) === '3d'
+        ? localStorage.getItem(GRAPH_MODE_KEY)
+        : defaultGraphMode) as '2d' | '3d'
   );
 
   const switchMode = (mode: '2d' | '3d') => {
@@ -65,6 +87,8 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
       activeNote={activeNote}
       onSelectNoteByTitle={onSelectNoteByTitle}
       toolbarExtra={toggle}
+      backgroundPattern={backgroundPattern}
+      persistNodePositions={persistNodePositions}
     />
   ) : (
     <GraphView3D
@@ -72,6 +96,10 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
       activeNote={activeNote}
       onSelectNoteByTitle={onSelectNoteByTitle}
       toolbarExtra={toggle}
+      backgroundPattern={backgroundPattern}
+      autoRotateOnLoad={autoRotateOnLoad}
+      autoRotateSpeed={autoRotateSpeed}
+      labelQuality={labelQuality}
     />
   );
 };

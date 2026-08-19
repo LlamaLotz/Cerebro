@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { GraphViewContainer } from './components/GraphViewContainer';
 import { TopicsView } from './components/TopicsView';
 import { AISidebar } from './components/AISidebar';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsPage } from './components/SettingsPage';
 import { IngestModal } from './components/IngestModal';
 import { IngestionLogPanel } from './components/IngestionLogPanel';
 import { useIngestion } from './services/ingestionStore';
@@ -102,8 +102,68 @@ const DEFAULT_SETTINGS: AppSettings = {
     apiKey: '',
     baseUrl: 'https://api.omniroute.ai/v1',
     model: 'gpt-4o',
+    temperature: 0.7,
+    injectUserProfile: false,
+    userProfile: '',
+  },
+  appearance: {
+    startupView: 'graph',
+    defaultGraphMode: '3d',
+    backgroundPattern: 'grid',
+    aiPanelOpenOnStart: false,
+    sidebarCollapsedOnStart: false,
+    linkHubVisibleByDefault: true,
+    linkHubDefaultHeight: 220,
+    labelQuality: 'high',
+    autoRotateOnLoad: false,
+    autoRotateSpeed: 0.67,
+  },
+  editor: {
+    autosaveDebounceMs: 800,
+    fullRenderLineThreshold: 8000,
+    findDebounceMs: 1000,
+  },
+  linking: {
+    autoLinkOnSave: true,
+    similarityThreshold: 0.7,
+    embedDebounceMs: 4000,
+    backfillOnVaultOpen: true,
+    embeddingThreads: 2,
+    embeddingBatchSize: 16,
+    persistNodePositions: true,
+  },
+  system: {
+    watchVault: true,
+    syncH1OnStartup: true,
+    versionRetentionDays: 0,
   },
 };
+
+// Deep-merges persisted settings over the defaults so a config file written by
+// an older version (missing newly-added fields) never leaves the app with
+// undefined values. Nested objects (omniRoute, appearance, editor, linking,
+// system) are merged recursively; scalars are replaced wholesale.
+function deepMergeSettings<T>(defaults: T, overrides: Partial<T>): T {
+  const out: any = { ...defaults };
+  for (const key of Object.keys(overrides) as (keyof T)[]) {
+    const dv = (defaults as any)[key];
+    const ov = (overrides as any)[key];
+    if (ov === undefined || ov === null) continue;
+    if (
+      dv &&
+      typeof dv === 'object' &&
+      !Array.isArray(dv) &&
+      ov &&
+      typeof ov === 'object' &&
+      !Array.isArray(ov)
+    ) {
+      out[key] = deepMergeSettings(dv, ov);
+    } else {
+      out[key] = ov;
+    }
+  }
+  return out;
+}
 
 export default function App() {
   // Cerebro's own dialog system (replaces native alert/confirm/prompt).
@@ -121,8 +181,10 @@ export default function App() {
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
   // the graph view (3D by default) with the AI panel minimized — the toolbar
   // toggles both.
-  const [layout, setLayout] = useState<'editor' | 'graph' | 'split' | 'topics'>('graph');
-  const [showAICoPilot, setShowAICoPilot] = useState(false);
+  const [layout, setLayout] = useState<'editor' | 'graph' | 'split' | 'topics'>(
+    DEFAULT_SETTINGS.appearance.startupView
+  );
+  const [showAICoPilot, setShowAICoPilot] = useState(DEFAULT_SETTINGS.appearance.aiPanelOpenOnStart);
   // Requested block scroll (blockId or 1-based line + timestamp), passed to the Editor.
   const [scrollRequest, setScrollRequest] = useState<{ blockId?: string; line?: number; ts: number } | null>(null);
 
@@ -163,7 +225,7 @@ export default function App() {
   // Debounced, coalesced semantic embedding generation on save: rapid saves
   // (autosave every ~800ms while typing) collapse into a single embedding job
   // that runs only after the user pauses, and never overlaps itself per note.
-  const EMBED_DEBOUNCE_MS = 4000;
+  // The pause length is tunable via the Linking setting `embedDebounceMs`.
   const embedTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const embedInFlightRef = useRef<Record<string, boolean>>({});
   const embedContentRef = useRef<Record<string, string>>({});
@@ -187,7 +249,7 @@ export default function App() {
         // lists re-query and drop stale entries (e.g. deleted blocks).
         setSemanticTick((t) => t + 1);
       });
-    }, EMBED_DEBOUNCE_MS);
+    }, settings.linking.embedDebounceMs);
   };
 
 
@@ -335,27 +397,63 @@ export default function App() {
     };
   }, []);
 
-  // 1. Load settings from localStorage on startup
+  // 1. Load settings on startup. Rust (~/.cerebro/settings.json) is the source
+  // of truth; on first run it returns null and we migrate whatever legacy
+  // localStorage settings exist, then persist them to Rust. Startup-only
+  // appearance settings (startup view, AI panel, collapsed sidebar) are applied
+  // here since this effect runs once at launch.
   useEffect(() => {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (raw) {
+    let cancelled = false;
+    (async () => {
+      let merged: AppSettings;
       try {
-        const parsed = JSON.parse(raw);
-        // Deep merge with defaults to ensure missing properties don't cause crashes
-        const merged: AppSettings = {
-          ...DEFAULT_SETTINGS,
-          ...parsed,
-          omniRoute: {
-            ...DEFAULT_SETTINGS.omniRoute,
-            ...(parsed.omniRoute || {}),
-          },
-        };
-        setSettings(merged);
+        const rustCfg = await tauriAPI.getRuntimeConfig();
+        if (rustCfg) {
+          merged = deepMergeSettings(DEFAULT_SETTINGS, rustCfg);
+        } else {
+          // First run / no config file yet: adopt legacy localStorage values.
+          let parsed: Partial<AppSettings> = {};
+          const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (raw) {
+            try {
+              parsed = JSON.parse(raw);
+            } catch (e) {
+              console.error('Failed to parse localStorage settings:', e);
+              appLogger.error('Failed to parse localStorage settings', e);
+            }
+          }
+          merged = deepMergeSettings(DEFAULT_SETTINGS, parsed);
+          // Persist the migrated settings so Rust owns them from now on.
+          tauriAPI.saveRuntimeConfig(merged).catch((e) => {
+            console.error('Failed to persist migrated settings:', e);
+            appLogger.error('Failed to persist migrated settings', e);
+          });
+        }
       } catch (e) {
-        console.error('Failed to parse localStorage settings:', e);
-        appLogger.error('Failed to parse localStorage settings', e);
+        console.error('Failed to load runtime config:', e);
+        appLogger.error('Failed to load runtime config', e);
+        merged = deepMergeSettings(DEFAULT_SETTINGS, {});
       }
-    }
+      if (cancelled) return;
+      setSettings(merged);
+
+      // Apply startup-only appearance settings (these only affect launch state).
+      setLayout(merged.appearance.startupView);
+      setShowAICoPilot(merged.appearance.aiPanelOpenOnStart);
+      if (localStorage.getItem('cerebro_sidebar_collapsed') === null) {
+        setSidebarCollapsed(merged.appearance.sidebarCollapsedOnStart);
+      }
+
+      // Enforce the version-history retention policy once at startup.
+      if (merged.system.versionRetentionDays > 0) {
+        tauriAPI.purgeExpiredHistory(merged.system.versionRetentionDays).catch((e) => {
+          console.error('Failed to purge expired history:', e);
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 2. Fetch files from designated Notes Directory when vaultPath or settings change
@@ -401,9 +499,10 @@ export default function App() {
       appLogger.info(`Vault indexed: ${sorted.length} notes (${path})`);
 
       // Startup sync: if a note's H1 doesn't match its filename (e.g. it was
-      // renamed outside Cerebro), rewrite the H1 to match. Runs once per vault.
-      // Contents are read one file at a time (they aren't bundled anymore).
-      if (h1SyncRanRef.current !== path) {
+      // renamed outside Cerebro), rewrite the H1 to match. Runs once per vault
+      // (gated by the System setting `syncH1OnStartup`). Contents are read one
+      // file at a time (they aren't bundled anymore).
+      if (settings.system.syncH1OnStartup && h1SyncRanRef.current !== path) {
         h1SyncRanRef.current = path;
         for (const n of sorted) {
           if (!n.title) continue;
@@ -423,8 +522,9 @@ export default function App() {
 
       setNotes(finalNotes);
       // The SQLite index is fully populated by `index_vault` above, so the
-      // backfill can query it immediately.
-      if (!backfillRanRef.current) {
+      // backfill can query it immediately (gated by the Linking setting
+      // `backfillOnVaultOpen`).
+      if (settings.linking.backfillOnVaultOpen && !backfillRanRef.current) {
         backfillRanRef.current = true;
         const count = await backfillEmbeddings();
         console.log(`Semantic backfill complete: ${count} notes embedded.`);
@@ -432,8 +532,9 @@ export default function App() {
         setSemanticTick((t) => t + 1);
       }
 
-      // Keep the index in sync reactively as files change on disk (once per vault)
-      if (watcherStartedRef.current !== path) {
+      // Keep the index in sync reactively as files change on disk (once per
+      // vault, gated by the System setting `watchVault`).
+      if (settings.system.watchVault && watcherStartedRef.current !== path) {
         watcherStartedRef.current = path;
         try {
           await linkerService.startWatchingVault(path);
@@ -513,10 +614,21 @@ export default function App() {
     };
   }, [activeNote?.path, activeNote?.content]);
 
-  // 3. Save Settings Handler
+  // 3. Save Settings Handler — persists to Rust (~/.cerebro/settings.json) as
+  // the source of truth, keeping localStorage as a lightweight cache.
   const handleSaveSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newSettings));
+    tauriAPI.saveRuntimeConfig(newSettings).catch((e) => {
+      console.error('Failed to save settings to disk:', e);
+      appLogger.error('Failed to save settings to disk', e);
+    });
+    // Apply the version-history retention policy immediately on save.
+    if (newSettings.system.versionRetentionDays > 0) {
+      tauriAPI.purgeExpiredHistory(newSettings.system.versionRetentionDays).catch((e) => {
+        console.error('Failed to purge expired history:', e);
+      });
+    }
   };
 
   // 4. Folder Select Trigger
@@ -1036,6 +1148,7 @@ export default function App() {
                 note={activeNote}
                 allNotes={notes}
                 vaultPath={settings.vaultPath}
+                settings={settings}
                 onSaveContent={handleSaveContent}
                 onWikiLinkClick={handleWikiLinkClick}
                 scrollRequest={scrollRequest}
@@ -1054,6 +1167,12 @@ export default function App() {
               graphData={graphData}
               activeNote={graphActiveNote}
               onSelectNoteByTitle={handleWikiLinkClick}
+              backgroundPattern={settings.appearance.backgroundPattern}
+              defaultGraphMode={settings.appearance.defaultGraphMode}
+              persistNodePositions={settings.linking.persistNodePositions}
+              autoRotateOnLoad={settings.appearance.autoRotateOnLoad}
+              autoRotateSpeed={settings.appearance.autoRotateSpeed}
+              labelQuality={settings.appearance.labelQuality}
             />
           )}
 
@@ -1081,8 +1200,8 @@ export default function App() {
         </div>
       </div>
 
-      {/* Settings Modal overlay */}
-      <SettingsModal
+      {/* Full-screen Settings page */}
+      <SettingsPage
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}

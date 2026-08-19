@@ -10,6 +10,14 @@ interface GraphView3DProps {
   onSelectNoteByTitle: (title: string) => void;
   /** Extra toolbar controls injected by the container (2D/3D mode toggle). */
   toolbarExtra?: React.ReactNode;
+  /** Appearance setting: grid / mesh / solid backdrop behind the graph. */
+  backgroundPattern?: 'grid' | 'mesh' | 'solid';
+  /** Appearance settings: start auto-rotating the camera on load + its speed. */
+  autoRotateOnLoad?: boolean;
+  autoRotateSpeed?: number;
+  /** Appearance setting: 'high' renders label billboards at up to 3x DPI
+   *  (crisper when zoomed, slightly more GPU); 'standard' caps at 1x. */
+  labelQuality?: 'standard' | 'high';
 }
 
 interface TooltipState {
@@ -52,6 +60,10 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   activeNote,
   onSelectNoteByTitle,
   toolbarExtra,
+  backgroundPattern = 'grid',
+  autoRotateOnLoad = false,
+  autoRotateSpeed = 0.67,
+  labelQuality = 'high',
 }) => {
   const graphRef = useRef<any>(null);
   // Explicit canvas sizing: react-force-graph-3d measures its container once at
@@ -74,7 +86,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   // title -> label sprite (reused across node rebuilds via refresh()).
   const labelCacheRef = useRef<Map<string, THREE.Sprite>>(new Map());
 
-  const [autoRotate, setAutoRotate] = useState(false);
+  const [autoRotate, setAutoRotate] = useState(autoRotateOnLoad);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const tooltipTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeTitle = activeNote?.title?.toLowerCase();
@@ -204,6 +216,101 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     });
   }
 
+  // --- World-space backdrop (grid / mesh floor) ---
+  // The old screen-space CSS overlay stayed frozen on the screen while the
+  // graph rotated underneath it — the mismatch read as motion sickness when
+  // orbiting/zooming. The pattern now lives on a large plane in the Three.js
+  // scene, just below the lowest node, so it rotates and zooms WITH the graph
+  // like a floor under the network. `solid` keeps the plain black canvas.
+  const bgObjectRef = useRef<THREE.Mesh | null>(null);
+  const BG_CELLS = 32;
+
+  const createBackgroundTexture = (pattern: 'grid' | 'mesh') => {
+    const px = 1024;
+    const canvas = document.createElement('canvas');
+    canvas.width = px;
+    canvas.height = px;
+    const ctx = canvas.getContext('2d')!;
+    if (pattern === 'grid') {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+      ctx.lineWidth = 1;
+      const step = px / BG_CELLS;
+      for (let i = 0; i <= BG_CELLS; i++) {
+        const p = Math.round(i * step);
+        ctx.beginPath();
+        ctx.moveTo(p, 0);
+        ctx.lineTo(p, px);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, p);
+        ctx.lineTo(px, p);
+        ctx.stroke();
+      }
+    } else {
+      const step = px / 24;
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.32)';
+      for (let x = step / 2; x < px; x += step) {
+        for (let y = step / 2; y < px; y += step) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  };
+
+  const createBackgroundObject = (pattern: 'grid' | 'mesh') => {
+    const texture = createBackgroundTexture(pattern);
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false })
+    );
+    // Lay the plane flat (XZ) so it reads as a floor under the graph.
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.userData.texture = texture;
+    return mesh;
+  };
+
+  const disposeBackground = (mesh: THREE.Mesh) => {
+    mesh.geometry.dispose();
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+  };
+
+  // Size + place the floor to the graph's current footprint: centered under
+  // the nodes and a little below the lowest one, scaled to ~3x the horizontal
+  // span so it reads as an open backdrop instead of a tight platform.
+  const updateBackground = () => {
+    const bg = bgObjectRef.current;
+    if (!bg) return;
+    const nodes: any[] = stableGraphRef.current?.nodes ?? graphDataRef.current.nodes;
+    if (!nodes.length) return;
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity,
+      minZ = Infinity,
+      maxZ = -Infinity;
+    for (const n of nodes) {
+      if (!Number.isFinite(n.x)) continue;
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y);
+      maxY = Math.max(maxY, n.y);
+      minZ = Math.min(minZ, n.z);
+      maxZ = Math.max(maxZ, n.z);
+    }
+    if (minX === Infinity) return;
+    const span = Math.max(maxX - minX, maxZ - minZ, 100);
+    const size = span * 3;
+    bg.scale.set(size, size, 1);
+    bg.position.set((minX + maxX) / 2, minY - span * 0.2, (minZ + maxZ) / 2);
+  };
+
   const nodeColor = (node: any) => {
     if (activeTitleRef.current && node.title?.toLowerCase() === activeTitleRef.current) return COLOR_ACTIVE;
     return node.exists ? COLOR_EXISTS : COLOR_MISSING;
@@ -217,10 +324,10 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     const cached = labelCacheRef.current.get(text);
     if (cached) return cached;
 
-    // Render at device-pixel-ratio (up to 3x) so the billboard text stays
-    // razor-sharp when the camera moves in close — a low-res canvas turns
-    // visibly soft the moment it's magnified.
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // Render at device-pixel-ratio (up to 3x for 'high', 1x for 'standard') so
+    // the billboard text stays razor-sharp when the camera moves in close — a
+    // low-res canvas turns visibly soft the moment it's magnified.
+    const dpr = Math.min(window.devicePixelRatio || 1, labelQuality === 'high' ? 3 : 1);
     const fontPx = 116;
     const padX = 52;
     const maxTextW = 1176; // ellipsize titles beyond this width
@@ -436,6 +543,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   const handleEngineStop = useCallback(() => {
     if (!pendingFrameRef.current) return;
     pendingFrameRef.current = false;
+    updateBackground();
     frameCamera(400);
   }, []);
 
@@ -499,6 +607,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
 
     const dir = new THREE.Vector3(0.55, 0.8, 0.95).normalize();
     const pos = new THREE.Vector3(cx, cy, cz).addScaledVector(dir, dist);
+    updateBackground();
     g.cameraPosition?.({ x: pos.x, y: pos.y, z: pos.z }, { x: cx, y: cy, z: cz }, duration);
   };
 
@@ -546,8 +655,39 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     // implementation has NO autoRotate property — setting it there was a
     // silent no-op, which is why the toggle never rotated the graph.
     controls.autoRotate = autoRotate;
-    controls.autoRotateSpeed = autoRotate ? 0.67 : 0;
-  }, [autoRotate]);
+    controls.autoRotateSpeed = autoRotate ? autoRotateSpeed : 0;
+  }, [autoRotate, autoRotateSpeed]);
+
+  // Mount / pattern-change: (re)build the world-space backdrop in the scene.
+  // The WebGL canvas is opaque black, so the floor's faint lines are the only
+  // backdrop — and because it lives in the scene, it rotates and zooms with
+  // the graph instead of staying glued to the screen.
+  useEffect(() => {
+    const g = graphRef.current;
+    if (!g) return;
+    const scene = g.scene?.();
+    if (!scene) return;
+
+    if (bgObjectRef.current) {
+      scene.remove(bgObjectRef.current);
+      disposeBackground(bgObjectRef.current);
+      bgObjectRef.current = null;
+    }
+    if (backgroundPattern === 'solid') return;
+
+    const bg = createBackgroundObject(backgroundPattern);
+    scene.add(bg);
+    bgObjectRef.current = bg;
+    updateBackground();
+
+    return () => {
+      if (bgObjectRef.current) {
+        scene.remove(bgObjectRef.current);
+        disposeBackground(bgObjectRef.current);
+        bgObjectRef.current = null;
+      }
+    };
+  }, [backgroundPattern]);
 
   // Cleanup: dispose the shared GPU resources + tooltip poll on unmount.
   useEffect(() => {

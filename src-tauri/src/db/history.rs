@@ -360,6 +360,40 @@ pub fn get_note_history(
     Ok(Some(NoteVersionHistory { base, deltas }))
 }
 
+/// Deletes version-history rows older than `retention_days` days (both the
+/// delta chain and base snapshots that outlived every delta). `0` keeps
+/// everything — the default, so history is never purged automatically unless
+/// the user opts in via the `system.versionRetentionDays` setting. Returns the
+/// number of rows removed.
+pub fn purge_expired_history(conn: &Connection, retention_days: u64) -> Result<usize, String> {
+    if retention_days == 0 {
+        return Ok(0);
+    }
+    let cutoff = format!("-{} days", retention_days);
+    let deltas = conn
+        .execute(
+            "DELETE FROM note_history_deltas
+             WHERE created_at < datetime('now', ?1)",
+            params![cutoff],
+        )
+        .map_err(|e| e.to_string())?;
+    // Purge base snapshots that are both older than the cutoff AND have no
+    // surviving deltas (a base is still the newest point of a live timeline,
+    // so we must not delete it just for being old while deltas remain).
+    let bases = conn
+        .execute(
+            "DELETE FROM note_history_base
+             WHERE created_at < datetime('now', ?1)
+               AND NOT EXISTS (
+                   SELECT 1 FROM note_history_deltas d
+                   WHERE d.note_path = note_history_base.note_path
+               )",
+            params![cutoff],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok((deltas + bases) as usize)
+}
+
 /// Retrieves all reconstructed version snapshots for a note history timeline.
 pub fn get_all_reconstructed_versions(
     conn: &Connection,
@@ -460,6 +494,88 @@ mod tests {
         // Reconstruct base (before Delta 1, e.g., target_delta_id = 0)
         let at_base = reconstruct_note_version(&conn, path, Some(0)).unwrap();
         assert_eq!(at_base, "Version 1\nHello World");
+    }
+
+    #[test]
+    fn test_purge_expired_history() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE note_history_base (
+                note_path TEXT PRIMARY KEY,
+                original_content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE note_history_deltas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_path TEXT NOT NULL,
+                delta_patch TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            ",
+        )
+        .unwrap();
+
+        // Fresh note: everything kept.
+        conn.execute(
+            "INSERT INTO note_history_base (note_path, original_content, created_at)
+             VALUES ('fresh', 'v0', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO note_history_deltas (note_path, delta_patch, created_at)
+             VALUES ('fresh', '+v1', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        // Old note with only old deltas: fully purged.
+        conn.execute(
+            "INSERT INTO note_history_base (note_path, original_content, created_at)
+             VALUES ('old', 'v0', datetime('now', '-100 days'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO note_history_deltas (note_path, delta_patch, created_at)
+             VALUES ('old', '+v1', datetime('now', '-100 days'))",
+            [],
+        )
+        .unwrap();
+
+        // Old base with a FRESH delta: base must survive (still the newest
+        // point of a live timeline).
+        conn.execute(
+            "INSERT INTO note_history_base (note_path, original_content, created_at)
+             VALUES ('mixed', 'v0', datetime('now', '-100 days'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO note_history_deltas (note_path, delta_patch, created_at)
+             VALUES ('mixed', '+v1', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let removed = purge_expired_history(&conn, 30).unwrap();
+        // 'old' delta + 'old' base are purged; 'mixed' base survives (fresh
+        // delta), 'fresh' rows survive.
+        assert_eq!(removed, 2);
+
+        let bases: i64 = conn
+            .query_row("SELECT COUNT(*) FROM note_history_base", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(bases, 2, "fresh + mixed bases must survive");
+        let deltas: i64 = conn
+            .query_row("SELECT COUNT(*) FROM note_history_deltas", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(deltas, 2, "fresh + mixed deltas must survive");
+
+        // retention_days == 0 keeps everything.
+        let removed_zero = purge_expired_history(&conn, 0).unwrap();
+        assert_eq!(removed_zero, 0);
     }
 
     #[test]

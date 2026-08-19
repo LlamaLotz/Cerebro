@@ -31,6 +31,11 @@ pub struct InitOptions {
     pub max_length: usize,
     pub cache_dir: PathBuf,
     pub show_download_progress: bool,
+    /// Cerebro: ONNX intra-op thread pool cap. `None` falls back to the
+    /// patched default of 2 (stock fastembed uses every logical CPU, which
+    /// spiked cores to ~96% on every save). Runtime-configurable via the
+    /// `linking.embeddingThreads` setting.
+    pub intra_op_threads: Option<usize>,
 }
 
 impl Default for InitOptions {
@@ -41,6 +46,7 @@ impl Default for InitOptions {
             max_length: DEFAULT_MAX_LENGTH,
             cache_dir: Path::new(DEFAULT_CACHE_DIR).to_path_buf(),
             show_download_progress: true,
+            intra_op_threads: None,
         }
     }
 }
@@ -115,14 +121,16 @@ impl TextEmbedding {
             max_length,
             cache_dir,
             show_download_progress,
+            intra_op_threads,
         } = options;
 
-        // Cerebro patch: cap the ONNX intra-op thread pool at 2. stock
-        // fastembed uses ALL logical CPUs, so every inference pass (runs on
-        // every note save) saturates every core — a 96% CPU spike across all
-        // cores. Two threads keep saves responsive; the model is small enough
-        // that wall-clock impact is minor.
-        let threads = available_parallelism()?.get().min(2);
+        // Cerebro patch: cap the ONNX intra-op thread pool. stock fastembed
+        // uses ALL logical CPUs, so every inference pass (runs on every note
+        // save) saturates every core — a 96% CPU spike across all cores. The
+        // default cap (2) keeps saves responsive; the model is small enough
+        // that wall-clock impact is minor. `intra_op_threads` overrides the
+        // cap at runtime via the linking.embeddingThreads setting.
+        let threads = available_parallelism()?.get().min(intra_op_threads.unwrap_or(2));
 
         let model_repo = TextEmbedding::retrieve_model(
             model_name.clone(),

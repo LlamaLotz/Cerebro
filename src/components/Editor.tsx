@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { Eye, Edit2, FileText, Calendar, Link2, ChevronUp, ChevronDown, X, Search, Anchor, Wand2, Info, Copy, Check, Scissors, History as HistoryIcon, RotateCcw, Undo2, Redo2 } from 'lucide-react';
-import { NoteFile, WikiLink, ReconstructedVersion } from '../types';
+import { NoteFile, WikiLink, ReconstructedVersion, AppSettings } from '../types';
 import { segmentContent, extractWikiLinks, findBlockLine, findLinkAtOffset } from '../utils/markdownParser';
 import { formatNote } from '../utils/formatter';
 import { countH2Headings, planNoteSplit, sanitizeFolderName } from '../utils/splitter';
@@ -48,8 +48,9 @@ const LARGE_NOTE_CHARS = 200_000;
 // During a block jump the preview temporarily renders beyond the window so the
 // target line element is guaranteed to exist. For huge notes rendering *all*
 // lines would mount 100k+ DOM nodes, so the full render is capped to a band
-// around the target line (the target is always inside the band).
-const MAX_FULL_RENDER_LINES = 8_000;
+// around the target line (the target is always inside the band). The number of
+// lines above which windowed rendering kicks in is the Editor setting
+// `fullRenderLineThreshold`.
 const FULL_RENDER_BAND = 4_000;
 
 // Pause before auto-rescanning all link types while the user types
@@ -60,9 +61,6 @@ const SCAN_DEBOUNCE_MS = 1000;
 // burns CPU. They refresh on this cadence, or immediately when embeddings
 // finish (semanticRefreshToken bump).
 const SEMANTIC_SCAN_THROTTLE_MS = 10_000;
-
-// Autosave delay after the last keystroke
-const SAVE_DEBOUNCE_MS = 800;
 
 // Parses extraction metadata (engine/method + source file or URL) out of the
 // note body. Two sources are supported: YAML frontmatter keys written by the
@@ -349,6 +347,7 @@ interface EditorProps {
   note: NoteFile | null;
   allNotes: NoteFile[];
   vaultPath: string;
+  settings: AppSettings;
   onSaveContent: (filePath: string, content: string) => Promise<void>;
   onWikiLinkClick: (targetTitle: string, blockId?: string) => void;
   scrollRequest?: { blockId?: string; line?: number; ts: number } | null;
@@ -361,6 +360,7 @@ export const Editor: React.FC<EditorProps> = ({
   note,
   allNotes,
   vaultPath,
+  settings,
   onSaveContent,
   onWikiLinkClick,
   scrollRequest,
@@ -389,7 +389,12 @@ export const Editor: React.FC<EditorProps> = ({
   const [deniedEntries, setDeniedEntries] = useState<DeniedLink[]>([]);
   const [deniedLoaded, setDeniedLoaded] = useState(false);
   const [linkHubVisible, setLinkHubVisible] = useState(
-    () => localStorage.getItem('cerebro_linkhub_visible') !== 'false'
+    // A user who explicitly toggled the LinkHub before (key stored) keeps
+    // their choice; otherwise the Appearance setting wins.
+    () =>
+      localStorage.getItem('cerebro_linkhub_visible') === null
+        ? settings.appearance.linkHubVisibleByDefault
+        : localStorage.getItem('cerebro_linkhub_visible') !== 'false'
   );
   const [showNoteMeta, setShowNoteMeta] = useState(false);
   // Time Machine: version timeline for the active note (base snapshot + every
@@ -410,7 +415,9 @@ export const Editor: React.FC<EditorProps> = ({
   const [isSplitting, setIsSplitting] = useState(false);
   const [linkHubHeight, setLinkHubHeight] = useState(() => {
     const saved = Number(localStorage.getItem('cerebro_linkhub_height'));
-    return Number.isFinite(saved) && saved > 0 ? saved : 220;
+    return Number.isFinite(saved) && saved > 0
+      ? saved
+      : settings.appearance.linkHubDefaultHeight;
   });
   const toggleLinkHub = (visible: boolean) => {
     setLinkHubVisible(visible);
@@ -536,6 +543,19 @@ export const Editor: React.FC<EditorProps> = ({
   pendingMentionsRef.current = pendingMentions;
   const denyLinkRef = useRef<typeof denyLink>(() => {});
   const prevKeywordsRef = useRef<Set<string>>(new Set());
+  // Live mirrors for the auto-link-on-save path (the autosave handler lives in
+  // a note-scoped effect, so it reads these refs instead of stale closures).
+  const autoLinkOnSaveRef = useRef(settings.linking.autoLinkOnSave);
+  autoLinkOnSaveRef.current = settings.linking.autoLinkOnSave;
+  const allNotesRef = useRef(allNotes);
+  allNotesRef.current = allNotes;
+  const dictionaryRef = useRef(dictionary);
+  dictionaryRef.current = dictionary;
+  const deniedEntriesRef = useRef(deniedEntries);
+  deniedEntriesRef.current = deniedEntries;
+  // Populated after `autoApplyMentions` is defined below; forceSave (defined
+  // earlier) calls this ref at save time.
+  const autoApplyMentionsRef = useRef<() => string | null>(() => null);
 
   const noteTitles = useMemo(() => allNotes.map((n) => n.title), [allNotes]);
 
@@ -565,7 +585,12 @@ export const Editor: React.FC<EditorProps> = ({
     dirtyRef.current = false;
     setIsSaved(true);
     const path = noteRef.current?.path;
-    if (path) saveRef.current(path, contentRef.current);
+    if (path) {
+      // Auto-link on save (Linking setting), then persist the possibly
+      // rewritten content.
+      autoApplyMentionsRef.current();
+      saveRef.current(path, contentRef.current);
+    }
   }, []);
 
   const forceSaveRef = useRef(forceSave);
@@ -586,11 +611,12 @@ export const Editor: React.FC<EditorProps> = ({
   // On (re)mount — i.e. when switching back to preview mode, the div is
   // recreated from scratch — restore the last scroll position so the viewport
   // doesn't reset to the start of the note.
-  // Only notes above MAX_FULL_RENDER_LINES are windowed; for everything else
-  // the scroll handler must NOT setState per frame — that would re-render the
-  // whole (fully rendered) note on every scroll tick and stutter scrolling.
+  // Only notes above the full-render line threshold (Editor setting) are
+  // windowed; for everything else the scroll handler must NOT setState per
+  // frame — that would re-render the whole (fully rendered) note on every
+  // scroll tick and stutter scrolling.
   const largeNoteRef = useRef(false);
-  largeNoteRef.current = lines.length > MAX_FULL_RENDER_LINES;
+  largeNoteRef.current = lines.length > settings.editor.fullRenderLineThreshold;
   useEffect(() => {
     const el = previewRef.current;
     if (!el || mode !== 'preview') return;
@@ -725,6 +751,60 @@ export const Editor: React.FC<EditorProps> = ({
     },
     [note]
   );
+
+  // Auto-link on save: when the Linking setting `autoLinkOnSave` is enabled,
+  // saving the note automatically converts its pending exact-title keyword
+  // mentions into [[wikilinks]] (the exact transformation the LinkHub
+  // "Approve" button performs) — the user doesn't have to click through every
+  // suggestion. Only mentions whose target note exists in the vault, hasn't
+  // been denied, and whose text still matches at the recorded offset are
+  // applied; stale offsets (text typed between the scan and the save) are
+  // skipped rather than corrupting the note. Returns the rewritten content, or
+  // null when nothing was applied.
+  const autoApplyMentions = useCallback((): string | null => {
+    if (!noteRef.current || !autoLinkOnSaveRef.current) return null;
+    const mentions = pendingMentionsRef.current;
+    if (mentions.length === 0) return null;
+
+    const denied = new Set(deniedEntriesRef.current.map(deniedEntryKey));
+    const knownPaths = new Set(allNotesRef.current.map((n) => n.path.toLowerCase()));
+    const applied: LinkMention[] = [];
+    let next = contentRef.current;
+    // Apply from the end backwards so earlier offsets stay valid.
+    const sorted = [...mentions]
+      .filter(
+        (m) =>
+          knownPaths.has(m.targetNoteId.toLowerCase()) &&
+          !denied.has(mentionKey(m))
+      )
+      .sort((a, b) => b.start - a.start);
+
+    for (const m of sorted) {
+      if (next.slice(m.start, m.end) !== m.matchedText) continue; // stale offset
+      const title =
+        dictionaryRef.current.find(([id]) => id === m.targetNoteId)?.[1] ??
+        m.targetNoteId;
+      const replacement =
+        m.matchedText === title
+          ? `[[${title}]]`
+          : `[[${title}|@${m.matchedText}]]`;
+      next = next.slice(0, m.start) + replacement + next.slice(m.end);
+      applied.push(m);
+    }
+    if (applied.length === 0 || next === contentRef.current) return null;
+
+    updateContent(next);
+    setPendingMentions((prev) => prev.filter((m) => !applied.includes(m)));
+    for (const m of applied) {
+      restoreDenied({
+        kind: 'keyword',
+        target: m.targetNoteId,
+        matched_text: m.matchedText,
+      });
+    }
+    return next;
+  }, [updateContent, restoreDenied]);
+  autoApplyMentionsRef.current = autoApplyMentions;
 
   // Visible suggestion counts (denied entries excluded) drive the Review badge.
   // Suggestions pointing at notes outside the current vault (stale SQLite rows
@@ -1164,13 +1244,14 @@ export const Editor: React.FC<EditorProps> = ({
   }, [isSearchOpen]);
 
   // Debounce the committed query: each keystroke updates searchInput, but the
-  // scan/highlight (React matches + CodeMirror decorations) runs 1000ms after
-  // the last keystroke — otherwise typing in the find box rescans the entire
-  // (potentially multi-MB) document per key, spiking the CPU and temps.
+  // scan/highlight (React matches + CodeMirror decorations) runs
+  // `findDebounceMs` after the last keystroke — otherwise typing in the find
+  // box rescans the entire (potentially multi-MB) document per key, spiking
+  // the CPU and temps.
   useEffect(() => {
-    const t = setTimeout(() => setSearchQuery(searchInput), 1000);
+    const t = setTimeout(() => setSearchQuery(searchInput), settings.editor.findDebounceMs);
     return () => clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, settings.editor.findDebounceMs]);
 
   // Recompute the shared match list whenever the content, query or case flag
   // changes (keeps the counter + preview highlights in sync with the doc).
@@ -1724,14 +1805,18 @@ const sidecarPath = (notePath: string): string => {
         setContent(doc);
         dirtyRef.current = true;
         setIsSaved(false);
-        if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);        timerRef.current = setTimeout(() => {
           timerRef.current = null;
           dirtyRef.current = false;
           setIsSaved(true);
           const path = noteRef.current?.path;
-          if (path) saveRef.current(path, doc);
-        }, SAVE_DEBOUNCE_MS);
+          if (path) {
+            // Auto-link on save (Linking setting), then persist the possibly
+            // rewritten content (contentRef may have been updated by it).
+            autoApplyMentionsRef.current();
+            saveRef.current(path, contentRef.current);
+          }
+        }, settings.editor.autosaveDebounceMs);
 
         // 30s idle debounce: reset on every keystroke; when it fires, the
         // note is checkpointed into the version history (a quiet moment is a
@@ -2347,11 +2432,13 @@ const sidecarPath = (notePath: string): string => {
                 // the band scrolls, real content gets replaced by shorter
                 // estimates, the scroll area shrinks, and scrollTop is
                 // clamped back up — the note can't reach its real bottom and
-                // the viewport snaps upward. Rendering notes up to
-                // MAX_FULL_RENDER_LINES fully keeps real heights end-to-end:
-                // exact scrollbar, bottom always reachable.
+                // the viewport snaps upward. Rendering notes up to the
+                // full-render line threshold fully keeps real heights
+                // end-to-end: exact scrollbar, bottom always reachable.
                 const windowed =
-                  previewViewportHeight > 0 && !fullRender && totalLines > MAX_FULL_RENDER_LINES;
+                  previewViewportHeight > 0 &&
+                  !fullRender &&
+                  totalLines > settings.editor.fullRenderLineThreshold;
                 let start: number;
                 let end: number;
                 if (windowed) {
@@ -2366,7 +2453,10 @@ const sidecarPath = (notePath: string): string => {
                     start = Math.max(0, Math.floor(previewScrollTop / PREVIEW_LINE_HEIGHT) - PREVIEW_BUFFER);
                     end = Math.min(totalLines, Math.ceil((previewScrollTop + previewViewportHeight) / PREVIEW_LINE_HEIGHT) + PREVIEW_BUFFER);
                   }
-                } else if (totalLines > MAX_FULL_RENDER_LINES && fullRenderAnchor != null) {
+                } else if (
+                  totalLines > settings.editor.fullRenderLineThreshold &&
+                  fullRenderAnchor != null
+                ) {
                   // Huge note during a jump: render a band around the target
                   // line instead of all ~100k lines. The target element is
                   // guaranteed inside the band.

@@ -51,6 +51,12 @@ export interface OmniRouteConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** Chat sampling temperature (0..2) sent with every AI request. */
+  temperature: number;
+  /** When true, the user profile below is injected into AI system prompts. */
+  injectUserProfile: boolean;
+  /** Free-form user context prepended to AI prompts when injectUserProfile is on. */
+  userProfile: string;
 }
 
 // Result of a full vault index: note metadata plus every folder under the
@@ -76,7 +82,41 @@ export interface ReconstructedVersion {
 export interface AppSettings {
   vaultPath: string;
   ingestionScript: string;
-  omniRoute: OmniRouteConfig;
+  omniRoute: OmniRouteConfig & {
+    temperature: number;
+    injectUserProfile: boolean;
+  };
+  appearance: {
+    startupView: 'graph' | 'editor' | 'split' | 'topics';
+    defaultGraphMode: '2d' | '3d';
+    backgroundPattern: 'grid' | 'mesh' | 'solid';
+    aiPanelOpenOnStart: boolean;
+    sidebarCollapsedOnStart: boolean;
+    linkHubVisibleByDefault: boolean;
+    linkHubDefaultHeight: number;
+    labelQuality: 'standard' | 'high';
+    autoRotateOnLoad: boolean;
+    autoRotateSpeed: number;
+  };
+  editor: {
+    autosaveDebounceMs: number;
+    fullRenderLineThreshold: number;
+    findDebounceMs: number;
+  };
+  linking: {
+    autoLinkOnSave: boolean;
+    similarityThreshold: number; // Rust MIN_SIMILARITY_SCORE (default 0.70)
+    embedDebounceMs: number;
+    backfillOnVaultOpen: boolean;
+    embeddingThreads: number; // fastembed intra-op cap (default 2)
+    embeddingBatchSize: number;
+    persistNodePositions: boolean;
+  };
+  system: {
+    watchVault: boolean;
+    syncH1OnStartup: boolean;
+    versionRetentionDays: number;
+  };
 }
 
 // Unified API Wrapper mapping frontend calls to Tauri Rust commands
@@ -233,6 +273,23 @@ export const tauriAPI = {
     } catch (err) {
       console.error('Failed to append ingestion log file entry:', err);
     }
+  },
+  // --- Rust runtime config bridge ------------------------------------------
+  // Settings are persisted by Rust to ~/.cerebro/settings.json (single source
+  // of truth), with localStorage kept only as a legacy migration source.
+  // Returns null when no config file exists yet (first run / corrupt file) so
+  // the frontend can migrate legacy localStorage settings before saving.
+  getRuntimeConfig: async (): Promise<AppSettings | null> => {
+    return await invoke<AppSettings | null>('get_runtime_config');
+  },
+  // Persists the full settings object and hot-applies the runtime-tunable
+  // values (similarity threshold, embedding batch) on the Rust side.
+  saveRuntimeConfig: async (settings: AppSettings): Promise<void> => {
+    await invoke('save_runtime_config', { config: settings });
+  },
+  // Deletes version-history rows older than `retentionDays` (0 = keep all).
+  purgeExpiredHistory: async (retentionDays: number): Promise<void> => {
+    await invoke('purge_expired_history', { retentionDays });
   },
   onVaultChanged: (callback: (data: { eventType: string; filename: string }) => void) => {
     // Return unsubscribe no-op since UI action saves trigger list refresh directly
