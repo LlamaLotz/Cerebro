@@ -24,7 +24,7 @@ const PREVIEW_MAX_CHARS = 50000;
 // content (e.g. the same version re-scrolled) skips rebuilding it entirely.
 const VersionPreview = React.memo(function VersionPreview({ content }: { content: string }) {
   return (
-    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-300">
+    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-slate-300">
       {content.length > PREVIEW_MAX_CHARS
         ? content.slice(0, PREVIEW_MAX_CHARS) + '\n… (preview truncated)'
         : content}
@@ -311,13 +311,13 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
   return (
     <div ref={overlayRef} className="absolute inset-0 z-30 flex items-center justify-center px-6 pointer-events-none">
       <div
-        className="pointer-events-auto w-full max-w-3xl bg-zinc-950/90 border border-zinc-800/80 backdrop-blur-xl rounded-2xl p-4 shadow-2xl select-none"
+        className="pointer-events-auto w-full max-w-3xl bg-surface border border-border backdrop-blur-xl rounded-2xl p-4 shadow-2xl select-none"
         style={{ width: cardWidth }}
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400 shrink-0">
+            <div className="p-1 bg-brand-500/10 border border-brand-500/20 rounded-md text-brand-400 shrink-0">
               <HistoryIcon className="w-4 h-4" />
             </div>
             <h3 className="text-sm font-semibold text-slate-100 truncate">Time Machine — {noteTitle}</h3>
@@ -354,11 +354,11 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                   height="16"
                   viewBox="0 0 11 16"
                   fill="none"
-                  className="block drop-shadow-[0_0_6px_rgba(249,115,22,0.8)]"
+                  className="block drop-shadow-[0_0_6px_rgba(90,122,205,0.8)]"
                   shapeRendering="crispEdges"
                 >
-                  <polygon points="0,0 11,0 5.5,6" fill="#f97316" />
-                  <line x1="5.5" y1="6" x2="5.5" y2="16" stroke="#f97316" strokeWidth="1" />
+                  <polygon points="0,0 11,0 5.5,6" fill="#FEB05D" />
+                  <line x1="5.5" y1="6" x2="5.5" y2="16" stroke="#FEB05D" strokeWidth="1" />
                 </svg>
               </div>
               <div
@@ -384,7 +384,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                   paddingLeft: `calc(50% - ${TICK_SLOT_WIDTH / 2}px)`,
                   paddingRight: `calc(50% - ${TICK_SLOT_WIDTH / 2}px)`,
                 }}
-                className="no-scrollbar overflow-x-auto cursor-grab active:cursor-grabbing touch-pan-y outline-none h-14 flex items-end bg-zinc-900/60 border border-zinc-800/60 rounded-xl select-none"
+                className="no-scrollbar overflow-x-auto cursor-grab active:cursor-grabbing touch-pan-y outline-none h-14 flex items-end bg-surface-hover border border-border rounded-xl select-none"
               >
                 {versions.map((v, i) => {
                   const selected = i === boundedSelIdx;
@@ -405,12 +405,12 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                           same column as the 1px SVG needle above (the needle
                           drops into the tick's center pixel) */}
                       <div
-                        className={`w-[3px] rounded-full transition-all duration-150 ${
+                        className={`w-[3px] rounded-none transition-all duration-150 ${
                           selected
-                            ? 'h-8 bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.9)]'
+                            ? 'h-8 bg-brand-500 shadow-[0_0_10px_rgba(254,176,93,0.9)]'
                             : major
-                              ? 'h-5 bg-orange-400/80'
-                              : 'h-3 bg-zinc-700 hover:bg-zinc-500'
+                              ? 'h-5 bg-brand-400/80'
+                              : 'h-3 bg-slate-700 hover:bg-slate-500'
                         }`}
                       />
                     </button>
@@ -429,7 +429,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                     ? 'Restore the original snapshot (current content is snapshotted first)'
                     : 'Restore this version (current content is snapshotted first)'
                 }
-                className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-colors disabled:opacity-40 disabled:hover:bg-orange-500 shrink-0"
+                className="flex items-center gap-1.5 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-colors disabled:opacity-40 disabled:hover:bg-brand-500 shrink-0"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 {restoring ? 'Restoring…' : 'Restore Version'}
@@ -439,7 +439,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                   {isBase ? 'Original snapshot' : `Version ${versions.length - selIdx} of ${versions.length}`}
                 </span>
                 {!isBase && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-300 tabular-nums shrink-0">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 tabular-nums shrink-0">
                     <span className="text-emerald-400">+{diff.added}</span> / <span className="text-red-400">-{diff.removed}</span>
                   </span>
                 )}
@@ -450,7 +450,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
             </div>
 
             {/* Live scrubbed-content preview */}
-            <div className="mt-3 max-h-44 overflow-y-auto rounded-lg bg-zinc-900/70 border border-zinc-800/60 px-3 py-2">
+            <div className="mt-3 max-h-44 overflow-y-auto rounded-lg bg-surface/70 border border-border/60 px-3 py-2">
               <VersionPreview content={sel ? sel.content : ''} />
             </div>
           </>

@@ -230,7 +230,7 @@ const DialogModal: React.FC<{
                   ? 'bg-red-500/10 border border-red-500/20 text-red-400'
                   : request.kind === 'alert'
                     ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-                    : 'bg-orange-500/10 border border-orange-500/20 text-orange-400'
+                    : 'bg-brand-500/10 border border-brand-500/20 text-brand-400'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -260,7 +260,7 @@ const DialogModal: React.FC<{
                 if (e.key === 'Enter') handleConfirm();
               }}
               placeholder={request.placeholder}
-              className="mt-3 w-full px-3 py-2 text-sm bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-orange-500/60 focus:ring-1 focus:ring-orange-500/30 transition-colors select-text"
+              className="mt-3 w-full px-3 py-2 text-sm bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-brand-500/60 focus:ring-1 focus:ring-brand-500/30 transition-colors select-text"
             />
           )}
         </div>
@@ -279,7 +279,7 @@ const DialogModal: React.FC<{
             className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
               isDanger
                 ? 'bg-red-500/90 text-white hover:bg-red-400'
-                : 'bg-orange-500/90 text-neutral-950 hover:bg-orange-400'
+                : 'bg-brand-500/90 text-neutral-950 hover:bg-brand-400'
             }`}
           >
             {confirmLabel}

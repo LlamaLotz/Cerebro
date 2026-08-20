@@ -62,7 +62,7 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
         onClick={() => switchMode('2d')}
         className={`px-3 py-1 text-xs rounded-md transition-colors ${
           graphMode === '2d'
-            ? 'bg-orange-500/90 text-neutral-950 font-medium'
+            ? 'bg-brand-500/90 text-neutral-950 font-medium'
             : 'text-neutral-400 hover:text-neutral-200'
         }`}
       >
@@ -72,7 +72,7 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
         onClick={() => switchMode('3d')}
         className={`px-3 py-1 text-xs rounded-md transition-colors ${
           graphMode === '3d'
-            ? 'bg-orange-500/90 text-neutral-950 font-medium'
+            ? 'bg-brand-500/90 text-neutral-950 font-medium'
             : 'text-neutral-400 hover:text-neutral-200'
         }`}
       >

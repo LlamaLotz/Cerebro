@@ -207,14 +207,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         data-note-path={note.path}
         className={`group flex items-center justify-between text-xs px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
           isActive 
-            ? 'bg-slate-900 border-l-2 border-orange-400 text-orange-100 font-medium' 
+            ? 'bg-slate-900 border-l-2 border-brand-400 text-brand-100 font-medium' 
             : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
         }`}
         style={{ paddingLeft: depth * 16 + 12 }}
         onClick={() => onSelectNote(note)}
       >
         <div className="flex items-center gap-2 truncate flex-1 pr-2">
-          <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-orange-400' : 'text-slate-500'}`} />
+          <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-brand-400' : 'text-slate-500'}`} />
           <span className="truncate">{note.title}</span>
         </div>
 
@@ -225,7 +225,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               e.stopPropagation();
               onRenameNote(note);
             }}
-            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-orange-400 rounded transition-colors"
+            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-brand-400 rounded transition-colors"
             title="Rename Note"
           >
             <Edit3 className="w-3.5 h-3.5" />
@@ -272,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {isCollapsed ? (
               <Folder className="w-4 h-4 shrink-0 text-slate-500" />
             ) : (
-              <FolderOpen className="w-4 h-4 shrink-0 text-orange-400/80" />
+              <FolderOpen className="w-4 h-4 shrink-0 text-brand-400/80" />
             )}
             <span className="truncate font-medium">{folder.name}</span>
             <span className="text-[10px] text-slate-600 shrink-0 tabular-nums">
@@ -310,18 +310,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div
       data-region="sidebar"
-      className="sidebar w-full border-r border-slate-900 bg-slate-950 flex flex-col h-full select-none"
+      className="sidebar w-full border-r border-slate-900 bg-panel flex flex-col h-full select-none"
     >
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
-            <span className="font-extrabold text-white text-base">C</span>
-          </div>
-          <div>
-            <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-orange-400 to-amber-500 leading-none">PRISM</h1>
-            <span className="text-[10px] text-slate-500 font-medium">Knowledge & AI Vault</span>
-          </div>
+        <div className="flex items-center">
+          <img src="/logo.png" alt="Prism logo" className="w-[38px] h-[38px]" />
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -347,7 +341,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Vault Location</span>
           <button 
             onClick={onSelectVault}
-            className="text-[10px] font-semibold text-orange-400 hover:text-orange-300 transition-colors flex items-center gap-1"
+            className="text-[10px] font-semibold text-brand-400 hover:text-brand-300 transition-colors flex items-center gap-1"
           >
             <FolderOpen className="w-3 h-3" /> Change
           </button>
@@ -365,7 +359,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <button 
             onClick={onSelectVault}
-            className="w-full text-left text-xs bg-orange-950/30 hover:bg-orange-950/50 border border-orange-900/50 text-orange-300 rounded px-3 py-2 flex items-center justify-center gap-1.5 transition-all font-medium"
+            className="w-full text-left text-xs bg-brand-950/30 hover:bg-brand-950/50 border border-brand-900/50 text-brand-300 rounded px-3 py-2 flex items-center justify-center gap-1.5 transition-all font-medium"
           >
             <FolderOpen className="w-4 h-4" /> Connect Note Folder
           </button>
@@ -383,7 +377,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               onClick={toggleLogs}
-              className="flex-1 bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-orange-400 border border-slate-800/80 rounded p-1.5 flex items-center justify-center transition-colors relative"
+              className="flex-1 bg-slate-950 hover:bg-slate-900 text-slate-300 hover:text-brand-400 border border-slate-800/80 rounded p-1.5 flex items-center justify-center transition-colors relative"
               title="Open / close ingestion logs"
             >
               <TerminalSquare className="w-4 h-4" />
@@ -396,7 +390,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     : progress.status === 'error'
                       ? 'bg-rose-400'
                       : progress.status === 'ingesting'
-                        ? 'bg-orange-400 animate-pulse'
+                        ? 'bg-brand-400 animate-pulse'
                         : 'bg-slate-500'
                 }`}
               />
@@ -404,11 +398,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               onClick={onRunIngest}
               disabled={isIngesting}
-              className="flex-1 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-800/40 text-white border border-orange-500/30 rounded p-1.5 flex items-center justify-center transition-colors shadow-sm shadow-orange-600/10"
+              className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:bg-brand-800/40 text-white border border-brand-500/30 rounded p-1.5 flex items-center justify-center transition-colors shadow-sm shadow-brand-600/10"
               title={isIngesting ? "Ingesting..." : "Run custom ingestion script"}
             >
               {isIngesting ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-orange-300" />
+                <RefreshCw className="w-4 h-4 animate-spin text-brand-300" />
               ) : (
                 <Play className="w-4 h-4 fill-current text-white" />
               )}
@@ -426,7 +420,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             placeholder="Search notes..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-900/60 hover:bg-slate-900 border border-slate-850 focus:border-slate-700 text-xs rounded-lg pl-8 pr-2.5 py-1.5 text-slate-200 focus:outline-none transition-colors"
+            className="w-full bg-slate-900/60 hover:bg-slate-900 border border-border focus:border-slate-700 text-xs rounded-lg pl-8 pr-2.5 py-1.5 text-slate-200 focus:outline-none transition-colors"
           />
         </div>
         {/* Single + button: dropdown between New Note and New Folder */}
@@ -434,7 +428,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             onClick={() => setCreateMenuOpen((o) => !o)}
             disabled={!vaultPath}
-            className="bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-30 disabled:pointer-events-none text-orange-400 border border-orange-500/20 px-2 rounded-lg transition-all flex items-center justify-center h-full"
+            className="bg-brand-500/10 hover:bg-brand-500/20 disabled:opacity-30 disabled:pointer-events-none text-brand-400 border border-brand-500/20 px-2 rounded-lg transition-all flex items-center justify-center h-full"
             title="Create"
           >
             <Plus className="w-4.5 h-4.5" />
@@ -446,7 +440,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setCreateMenuOpen(false);
                   onNewNote();
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium text-slate-200 hover:bg-orange-500/10 hover:text-orange-300 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium text-slate-200 hover:bg-brand-500/10 hover:text-brand-300 transition-colors"
               >
                 <FileText className="w-3.5 h-3.5 text-slate-500" />
                 New Note
@@ -456,7 +450,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   setCreateMenuOpen(false);
                   onNewFolder();
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium text-slate-200 hover:bg-orange-500/10 hover:text-orange-300 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium text-slate-200 hover:bg-brand-500/10 hover:text-brand-300 transition-colors"
               >
                 <FolderPlus className="w-3.5 h-3.5 text-slate-500" />
                 New Folder

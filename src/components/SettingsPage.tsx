@@ -80,13 +80,13 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = (
     role="switch"
     aria-checked={checked}
     onClick={() => onChange(!checked)}
-    className={`relative w-10 h-[22px] rounded-full transition-colors shrink-0 ${
-      checked ? 'bg-orange-500' : 'bg-slate-700'
+    className={`w-10 h-5 p-0.5 border transition-colors shrink-0 ${
+      checked ? 'bg-brand-500 border-brand-500' : 'bg-zinc-900 border-zinc-700'
     }`}
   >
     <span
-      className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow transition-all ${
-        checked ? 'left-[22px]' : 'left-[3px]'
+      className={`block w-3.5 h-3.5 transition-transform ${
+        checked ? 'translate-x-[22px] bg-neutral-950' : 'translate-x-0 bg-zinc-400'
       }`}
     />
   </button>
@@ -111,7 +111,7 @@ const NumberField: React.FC<{
         const n = Number(e.target.value);
         if (Number.isFinite(n)) onChange(n);
       }}
-      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-orange-500 tabular-nums"
+      className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-brand-500 tabular-nums"
     />
     {suffix && <span className="text-xs text-slate-500">{suffix}</span>}
   </div>
@@ -134,7 +134,7 @@ const RangeField: React.FC<{
       max={max}
       step={step}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="w-40 accent-orange-500"
+      className="w-40 accent-brand-500"
     />
     <span className="text-xs text-slate-400 tabular-nums w-14 text-right">
       {format ? format(value) : value}
@@ -155,7 +155,7 @@ const Segmented: React.FC<{
         onClick={() => onChange(o.value)}
         className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
           value === o.value
-            ? 'bg-orange-500/90 text-neutral-950 font-medium'
+            ? 'bg-brand-500/90 text-neutral-950 font-medium'
             : 'text-slate-400 hover:text-slate-200'
         }`}
       >
@@ -177,7 +177,7 @@ const TextField: React.FC<{
     value={value}
     onChange={(e) => onChange(e.target.value)}
     placeholder={placeholder}
-    className={`w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-orange-500 ${
+    className={`w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500 ${
       mono ? 'font-mono' : ''
     }`}
   />
@@ -236,7 +236,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
       <aside className="w-60 shrink-0 border-r border-slate-900 bg-slate-950/60 flex flex-col">
         <div className="flex items-center justify-between px-5 h-14 border-b border-slate-900 shrink-0">
           <div className="flex items-center gap-2">
-            <SlidersHorizontal className="w-4 h-4 text-orange-400" />
+            <SlidersHorizontal className="w-4 h-4 text-brand-400" />
             <h2 className="text-sm font-semibold text-slate-100">Settings</h2>
           </div>
           <button
@@ -254,7 +254,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
               onClick={() => setSection(s.id)}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors text-left ${
                 section === s.id
-                  ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+                  ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
               }`}
             >
@@ -283,7 +283,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                 <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                   <div className="space-y-1.5 mb-4">
                     <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                      <FolderOpen className="w-4 h-4 text-orange-400" /> Note Vault Folder
+                      <FolderOpen className="w-4 h-4 text-brand-400" /> Note Vault Folder
                     </label>
                     <div className="text-xs text-slate-500">
                       The directory your ingest script outputs files to. All notes, folders and the
@@ -296,7 +296,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                       value={draft.vaultPath}
                       onChange={(e) => patch('vaultPath', e.target.value)}
                       placeholder="/path/to/your/notes"
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-orange-500"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500"
                     />
                     <button
                       onClick={handleSelectFolder}
@@ -310,15 +310,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                 <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
                   <div className="flex items-center justify-between mb-3">
                     <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
-                      <Terminal className="w-4 h-4 text-orange-400" /> Extractor Engine & Installer
+                      <Terminal className="w-4 h-4 text-brand-400" /> Extractor Engine & Installer
                     </label>
                     <button
                       onClick={runInstaller}
                       disabled={isInstallingEngine}
-                      className="text-xs bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors border border-orange-400/20"
+                      className="text-xs bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors border border-brand-400/20"
                     >
                       {isInstallingEngine ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-200" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-200" />
                       ) : (
                         <Wrench className="w-3.5 h-3.5" />
                       )}
@@ -336,7 +336,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                     onChange={(e) => patch('ingestionScript', e.target.value)}
                     rows={3}
                     spellCheck={false}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-orange-500 resize-y"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-brand-500 resize-y"
                   />
                   {installLogs && (
                     <div className="mt-3 p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap select-text">
@@ -383,7 +383,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                         onChange={(e) =>
                           patchNested('omniRoute', { ...draft.omniRoute, model: e.target.value })
                         }
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-orange-500 cursor-pointer"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-brand-500 cursor-pointer"
                       >
                         <option value="">Select a model...</option>
                         {COMMON_MODELS.map((m) => (
@@ -444,7 +444,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                         }
                         rows={3}
                         placeholder="e.g. I'm a PhD researcher in quantum computing who likes concise, technical answers."
-                        className="w-72 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-orange-500 resize-y"
+                        className="w-72 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 resize-y"
                       />
                     </Field>
                   </div>
@@ -770,7 +770,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
             </button>
             <button
               onClick={handleSave}
-              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white text-sm font-medium rounded-lg flex items-center gap-1.5 shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all border border-orange-400/20"
+              className="px-4 py-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 text-white text-sm font-medium rounded-lg flex items-center gap-1.5 shadow-md shadow-brand-500/10 hover:shadow-brand-500/20 transition-all border border-brand-400/20"
             >
               <Save className="w-4 h-4" /> Save Changes
             </button>

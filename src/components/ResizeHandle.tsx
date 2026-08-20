@@ -59,7 +59,7 @@ export const ResizeHandle: React.FC<ResizeHandleProps> = ({ direction, onResize,
       onMouseDown={onDown}
       className={`shrink-0 ${
         direction === 'vertical' ? 'h-1 cursor-row-resize' : 'w-1 cursor-col-resize'
-      } hover:bg-orange-500/40 active:bg-orange-500/60 transition-colors ${className ?? ''}`}
+      } hover:bg-brand-500/40 active:bg-brand-500/60 transition-colors ${className ?? ''}`}
     />
   );
 };

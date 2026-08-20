@@ -23,7 +23,7 @@ const LEVEL_STYLES: Record<LogEntry['level'], { dot: string; label: string }> = 
 
 const STATUS_META: Record<IngestionProgress['status'], { label: string; dot: string }> = {
   idle: { label: 'Idle', dot: 'bg-slate-500' },
-  ingesting: { label: 'Ingesting', dot: 'bg-orange-400 animate-pulse' },
+  ingesting: { label: 'Ingesting', dot: 'bg-brand-400 animate-pulse' },
   paused: { label: 'Paused', dot: 'bg-amber-400' },
   completed: { label: 'Completed', dot: 'bg-emerald-400' },
   error: { label: 'Error', dot: 'bg-rose-400' },
@@ -190,7 +190,7 @@ export const IngestionLogPanel: React.FC = () => {
       : progress.status === 'error'
         ? 'bg-rose-400'
         : progress.status === 'ingesting'
-          ? 'bg-orange-400'
+          ? 'bg-brand-400'
           : 'bg-slate-500';
 
   const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
@@ -213,7 +213,7 @@ export const IngestionLogPanel: React.FC = () => {
           if (justDraggedRef.current) return;
           setMinimized(false);
         }}
-        className="fixed z-50 flex items-center gap-2.5 pl-3 pr-3.5 py-2 rounded-xl bg-slate-950/95 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur hover:border-orange-500/40 transition-colors group cursor-grab active:cursor-grabbing touch-none select-none"
+        className="fixed z-50 flex items-center gap-2.5 pl-3 pr-3.5 py-2 rounded-xl bg-slate-950/95 border border-slate-800 shadow-2xl shadow-black/50 backdrop-blur hover:border-brand-500/40 transition-colors group cursor-grab active:cursor-grabbing touch-none select-none"
         style={{
           left: pos ? Math.min(pos.x, window.innerWidth - bw) : window.innerWidth - bw - 16,
           top: pos ? Math.min(pos.y, window.innerHeight - bh) : window.innerHeight - bh - 16,
@@ -225,14 +225,14 @@ export const IngestionLogPanel: React.FC = () => {
           {statusMeta.label}
         </span>
         {percent !== null && (
-          <span className="text-[11px] font-mono text-orange-400">{percent}%</span>
+          <span className="text-[11px] font-mono text-brand-400">{percent}%</span>
         )}
         {progress.currentFileName && (
           <span className="text-[10px] text-slate-500 max-w-[140px] truncate">
             {truncate(progress.currentFileName, 28)}
           </span>
         )}
-        <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 group-hover:text-orange-400 transition-colors">
+        <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 group-hover:text-brand-400 transition-colors">
           <TerminalSquare className="w-3.5 h-3.5" /> Logs ({logs.length})
         </span>
         <span
@@ -270,7 +270,7 @@ export const IngestionLogPanel: React.FC = () => {
         title="Drag to move"
       >
         <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-md bg-orange-500/10 border border-orange-500/20 text-orange-400">
+          <div className="p-1.5 rounded-md bg-brand-500/10 border border-brand-500/20 text-brand-400">
             <TerminalSquare className="w-4 h-4" />
           </div>
           <div>
@@ -322,7 +322,7 @@ export const IngestionLogPanel: React.FC = () => {
               onClick={() => setFilter(f.value)}
               className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-colors ${
                 filter === f.value
-                  ? 'bg-slate-800 text-orange-400'
+                  ? 'bg-slate-800 text-brand-400'
                   : 'text-slate-500 hover:text-slate-300 hover:bg-slate-900'
               }`}
             >
@@ -371,7 +371,7 @@ export const IngestionLogPanel: React.FC = () => {
         <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium mb-1.5">
           <span className="flex items-center gap-1.5">
             {progress.status === 'ingesting' ? (
-              <Loader2 className="w-3 h-3 animate-spin text-orange-400" />
+              <Loader2 className="w-3 h-3 animate-spin text-brand-400" />
             ) : (
               <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
             )}
@@ -383,7 +383,7 @@ export const IngestionLogPanel: React.FC = () => {
             </span>
           )}
         </div>
-        <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
+        <div className="h-1.5 bg-slate-900 rounded-none overflow-hidden">
           <div
             className={`h-full transition-all duration-300 ${barColor}`}
             style={{ width: `${percent ?? 0}%` }}

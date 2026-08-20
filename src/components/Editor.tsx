@@ -144,7 +144,7 @@ const flashField = StateField.define<{ line: number; cls: string }>({
 const cmTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px' },
   '.cm-scroller': {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontFamily: "'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
     lineHeight: '1.65',
   },
   '.cm-content': { padding: '28px 24px' },
@@ -1907,7 +1907,7 @@ const sidecarPath = (notePath: string): string => {
     return (
       <div className="flex-1 bg-slate-900/30 flex flex-col items-center justify-center p-8 select-none">
         <div className="text-center space-y-3 max-w-sm">
-          <div className="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-orange-400/80 shadow-inner">
+          <div className="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto text-brand-400/80 shadow-inner">
             <FileText className="w-8 h-8" />
           </div>
           <h3 className="text-sm font-semibold text-slate-300">No Note Selected</h3>
@@ -1929,7 +1929,7 @@ const sidecarPath = (notePath: string): string => {
 
   const BlockAnchorIcon: React.FC<{ id: string }> = ({ id }) => (
     <span
-      className="inline-flex items-center gap-0.5 align-middle mx-1 text-slate-600 hover:text-orange-400/70 cursor-help transition-colors"
+      className="inline-flex items-center gap-0.5 align-middle mx-1 text-slate-600 hover:text-brand-400/70 cursor-help transition-colors"
       title={`Block anchor: ^${id}`}
     >
       <Anchor className="w-2.5 h-2.5" />
@@ -2019,7 +2019,7 @@ const sidecarPath = (notePath: string): string => {
           // 3. Blockquotes
           if (trimmedLine.startsWith('> ')) {
             return (
-              <blockquote key={lineIdx} data-line={lineIdx} className={`border-l-4 border-orange-500/50 bg-slate-900/40 px-4 py-2 my-2 rounded-r-lg text-sm italic text-slate-300 font-sans${flashCls}`}>
+              <blockquote key={lineIdx} data-line={lineIdx} className={`border-l-4 border-brand-500/50 bg-slate-900/40 px-4 py-2 my-2 rounded-r-lg text-sm italic text-slate-300 font-sans${flashCls}`}>
                 {renderInlineElements(rawLine.substring(2), lineIdx + 1)}
                 {anchorNode}
               </blockquote>
@@ -2180,7 +2180,7 @@ const sidecarPath = (notePath: string): string => {
       {/* Find-in-note overlay */}
       {isSearchOpen && (
         <div className="absolute top-16 right-6 z-20 flex items-center gap-1.5 bg-slate-950/95 border border-slate-800 rounded-lg shadow-xl px-2 py-1.5">
-          <Search className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+          <Search className="w-3.5 h-3.5 text-brand-400 shrink-0" />
           <input
             ref={searchInputRef}
             value={searchInput}
@@ -2204,7 +2204,7 @@ const sidecarPath = (notePath: string): string => {
             title="Match case"
             className={`px-1.5 py-0.5 text-[10px] font-bold rounded border transition-all ${
               searchCaseSensitive
-                ? 'bg-orange-500/20 border-orange-500/40 text-orange-300'
+                ? 'bg-brand-500/20 border-brand-500/40 text-brand-300'
                 : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -2218,14 +2218,14 @@ const sidecarPath = (notePath: string): string => {
           <button
             onClick={() => goToMatch(-1)}
             title="Previous match (Shift+Enter)"
-            className="p-0.5 text-slate-400 hover:text-orange-400 transition-colors"
+            className="p-0.5 text-slate-400 hover:text-brand-400 transition-colors"
           >
             <ChevronUp className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => goToMatch(1)}
             title="Next match (Enter)"
-            className="p-0.5 text-slate-400 hover:text-orange-400 transition-colors"
+            className="p-0.5 text-slate-400 hover:text-brand-400 transition-colors"
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
@@ -2241,7 +2241,7 @@ const sidecarPath = (notePath: string): string => {
 
       {/* Jump status badge (debug aid for block-link navigation) */}
       {jumpStatus && (
-        <div className="absolute top-16 left-6 z-20 flex items-center gap-1.5 bg-slate-950/95 border border-orange-500/30 rounded-lg shadow-xl px-3 py-1.5 text-[11px] text-orange-300">
+        <div className="absolute top-16 left-6 z-20 flex items-center gap-1.5 bg-slate-950/95 border border-brand-500/30 rounded-lg shadow-xl px-3 py-1.5 text-[11px] text-brand-300">
           {jumpStatus}
         </div>
       )}
@@ -2256,7 +2256,7 @@ const sidecarPath = (notePath: string): string => {
       {/* Top Editor Bar */}
       <div className="px-6 py-3 border-b border-slate-900/60 bg-slate-950/20 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 truncate">
-          <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400">
+          <div className="p-1 bg-brand-500/10 border border-brand-500/20 rounded-md text-brand-400">
             <FileText className="w-4 h-4" />
           </div>
           <div className="truncate">
@@ -2292,7 +2292,7 @@ const sidecarPath = (notePath: string): string => {
               onClick={handleUndo}
               disabled={!canUndo}
               title="Undo last edit: Revert the most recent change to this note. Shortcut: Ctrl/Cmd+Z"
-              className="p-1.5 rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+              className="p-1.5 rounded-md text-slate-400 hover:text-brand-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
             >
               <Undo2 className="w-3.5 h-3.5" />
             </button>
@@ -2300,7 +2300,7 @@ const sidecarPath = (notePath: string): string => {
               onClick={handleRedo}
               disabled={!canRedo}
               title="Redo edit: Re-apply the change you just undid. Shortcut: Ctrl/Cmd+Shift+Z"
-              className="p-1.5 rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+              className="p-1.5 rounded-md text-slate-400 hover:text-brand-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
             >
               <Redo2 className="w-3.5 h-3.5" />
             </button>
@@ -2313,14 +2313,14 @@ const sidecarPath = (notePath: string): string => {
                 ? 'Split note into sections — needs at least 2 ## headings'
                 : 'Split this note into separate notes (one per ## section)'
             }
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all disabled:opacity-40 disabled:hover:text-slate-400 disabled:hover:border-slate-800"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all disabled:opacity-40 disabled:hover:text-slate-400 disabled:hover:border-slate-800"
           >
             <Scissors className="w-3.5 h-3.5" /> {isSplitting ? 'Splitting…' : 'Split'}
           </button>
           <button
             onClick={insertBlockAnchor}
             title="Insert a block anchor (^id) on this paragraph and copy a [[Note#^id]] link"
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all"
           >
             <Anchor className="w-3.5 h-3.5" /> Block
           </button>
@@ -2328,7 +2328,7 @@ const sidecarPath = (notePath: string): string => {
             <button
               onClick={handleFormat}
               title="Format this note (normalize headings & spacing, sync H1 to filename)"
-              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-orange-400 transition-all"
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-brand-400 transition-all"
             >
               <Wand2 className="w-3.5 h-3.5" /> Format
             </button>
@@ -2336,7 +2336,7 @@ const sidecarPath = (notePath: string): string => {
               onClick={handleUndoFormat}
               disabled={formatSnapshot === null}
               title="Undo the last formatting action"
-              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-orange-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-brand-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
             >
               <RotateCcw className="w-3.5 h-3.5" /> Undo
             </button>
@@ -2353,21 +2353,21 @@ const sidecarPath = (notePath: string): string => {
               });
             }}
             title="Find in note: Search within the current note's text. Enter jumps to the next match, Shift+Enter to the previous one, Esc closes the search. Shortcut: Ctrl/Cmd+F"
-            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all"
           >
             <Search className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setShowNoteMeta(true)}
             title="Note metadata: View title, file path, modified time, line / word / character counts, links and keywords for this note."
-            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all"
           >
             <Info className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={openHistory}
             title="Time Machine: Browse autosaved snapshots of this note and restore any older version."
-            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-orange-400 hover:border-orange-500/40 transition-all"
+            className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all"
           >
             <HistoryIcon className="w-3.5 h-3.5" />
           </button>
@@ -2380,7 +2380,7 @@ const sidecarPath = (notePath: string): string => {
               title="Preview mode: Render this note as formatted markdown — headings, lists, links and tags. Saves before switching."
               className={`p-1.5 rounded-md transition-all ${
                 mode === 'preview'
-                  ? 'bg-slate-800 text-orange-400 shadow-sm'
+                  ? 'bg-slate-800 text-brand-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -2391,7 +2391,7 @@ const sidecarPath = (notePath: string): string => {
               title="Edit mode: Switch to the raw markdown editor."
               className={`p-1.5 rounded-md transition-all ${
                 mode === 'edit'
-                  ? 'bg-slate-800 text-orange-400 shadow-sm'
+                  ? 'bg-slate-800 text-brand-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -2412,7 +2412,7 @@ const sidecarPath = (notePath: string): string => {
         {mode === 'preview' && (
           <div
             ref={previewRef}
-            className="markdown-body flex-1 overflow-y-auto px-8 py-6 max-w-4xl mx-auto w-full select-text selection:bg-orange-500/30 selection:text-white"
+            className="markdown-body flex-1 overflow-y-auto px-8 py-6 max-w-4xl mx-auto w-full select-text selection:bg-brand-500/30 selection:text-white"
           >
             {content.length === 0 ? (
               <div className="text-slate-600 italic text-xs">This note is empty. Click "Edit" to add content.</div>
@@ -2528,7 +2528,7 @@ const sidecarPath = (notePath: string): string => {
       ) : (
         <button
           onClick={() => toggleLinkHub(true)}
-          className="shrink-0 w-full flex items-center justify-center gap-2 py-1.5 border-t border-slate-900/80 bg-slate-950/30 text-[10px] font-semibold text-slate-500 hover:text-orange-400 transition-colors"
+          className="shrink-0 w-full flex items-center justify-center gap-2 py-1.5 border-t border-slate-900/80 bg-slate-950/30 text-[10px] font-semibold text-slate-500 hover:text-brand-400 transition-colors"
           title="Show links panel"
         >
           <Link2 className="w-3.5 h-3.5" />
@@ -2549,7 +2549,7 @@ const sidecarPath = (notePath: string): string => {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/80">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400 shrink-0">
+                <div className="p-1 bg-brand-500/10 border border-brand-500/20 rounded-md text-brand-400 shrink-0">
                   <Info className="w-4 h-4" />
                 </div>
                 <h3 className="text-sm font-semibold text-slate-100 truncate">Note Metadata</h3>
@@ -2602,7 +2602,7 @@ const sidecarPath = (notePath: string): string => {
                         href={row.value}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-orange-400 hover:underline"
+                        className="text-brand-400 hover:underline"
                       >
                         {row.value}
                       </a>
@@ -2632,7 +2632,7 @@ const sidecarPath = (notePath: string): string => {
                       .catch(() => {});
                   }}
                   title="Copy full path"
-                  className="p-1 rounded-md text-slate-500 hover:text-orange-400 hover:bg-slate-800 transition-colors shrink-0"
+                  className="p-1 rounded-md text-slate-500 hover:text-brand-400 hover:bg-slate-800 transition-colors shrink-0"
                 >
                   {copiedPath ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>

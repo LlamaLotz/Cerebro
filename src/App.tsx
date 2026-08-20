@@ -18,6 +18,8 @@ import { formatNote, noteTitleMatches } from './utils/formatter';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
+import { TitleBar } from './components/TitleBar';
+import { SplashScreen } from './components/SplashScreen';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'prism_app_settings';
@@ -177,7 +179,25 @@ export default function App() {
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
-  
+
+  // Startup splash: visible until settings load AND the vault's first index
+  // completes (or is skipped because no vault is connected), then fades out.
+  const [isBooting, setIsBooting] = useState(true);
+  const [splashVisible, setSplashVisible] = useState(true);
+  const splashMountedAtRef = useRef(Date.now());
+  const settingsReadyRef = useRef(false);
+  const vaultReadyRef = useRef(false);
+  const splashDismissedRef = useRef(false);
+
+  const requestSplashDismiss = () => {
+    if (splashDismissedRef.current) return;
+    if (!settingsReadyRef.current || !vaultReadyRef.current) return;
+    splashDismissedRef.current = true;
+    // Hold the splash briefly so it reads as a deliberate intro, not a flash.
+    const remaining = Math.max(0, 900 - (Date.now() - splashMountedAtRef.current));
+    setTimeout(() => setIsBooting(false), remaining);
+  };
+
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
   // the graph view (3D by default) with the AI panel minimized — the toolbar
   // toggles both.
@@ -479,6 +499,12 @@ export default function App() {
       if (cancelled) return;
       setSettings(merged);
 
+      // Settings own the vault path; once loaded the splash can proceed if
+      // there's no vault to index (otherwise it waits for the first fetchNotes).
+      settingsReadyRef.current = true;
+      if (!merged.vaultPath) vaultReadyRef.current = true;
+      requestSplashDismiss();
+
       // Apply startup-only appearance settings (these only affect launch state).
       setLayout(merged.appearance.startupView);
       setShowAICoPilot(merged.appearance.aiPanelOpenOnStart);
@@ -605,6 +631,10 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error reading vault files:', err);
+    } finally {
+      // First vault index (success or failure) unblocks the splash screen.
+      vaultReadyRef.current = true;
+      requestSplashDismiss();
     }
   };
 
@@ -1086,17 +1116,20 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden select-none">
-      
+    <div className="flex flex-col h-screen w-screen bg-base text-slate-100 font-sans overflow-hidden select-none">
+      {/* Custom frameless-window titlebar (drag region + window controls) */}
+      <TitleBar />
+
+      <div className="flex flex-1 overflow-hidden">
       {/* Sidebar navigation (collapsible) */}
       {sidebarCollapsed ? (
         <div
           data-region="sidebar"
-          className="shrink-0 h-full w-11 border-r border-slate-900 bg-slate-950 flex flex-col items-center py-3 gap-2 select-none"
+          className="shrink-0 h-full w-11 border-r border-slate-900 bg-panel flex flex-col items-center py-3 gap-2 select-none"
         >
           <button
             onClick={toggleSidebar}
-            className="p-2 rounded-md text-slate-400 hover:text-orange-400 hover:bg-slate-900 transition-colors"
+            className="p-2 rounded-md text-slate-400 hover:text-brand-400 hover:bg-slate-900 transition-colors"
             title="Expand sidebar"
           >
             <PanelLeftOpen className="w-5 h-5" />
@@ -1141,8 +1174,8 @@ export default function App() {
                onClick={() => setLayout('editor')}
                className={`p-2 rounded-md transition-all ${
                  layout === 'editor'
-                   ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
+                 ? 'bg-surface text-brand-400 border border-brand-500'
+                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
                }`}
                title="Note Editor"
              >
@@ -1152,8 +1185,8 @@ export default function App() {
                onClick={() => setLayout('split')}
                className={`p-2 rounded-md transition-all ${
                  layout === 'split'
-                   ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
+                 ? 'bg-surface text-brand-400 border border-brand-500'
+                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
                }`}
                title="Split View"
              >
@@ -1163,8 +1196,8 @@ export default function App() {
                onClick={() => setLayout('graph')}
                className={`p-2 rounded-md transition-all ${
                  layout === 'graph'
-                   ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
+                 ? 'bg-surface text-brand-400 border border-brand-500'
+                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
                }`}
                title="Graph Network"
              >
@@ -1174,8 +1207,8 @@ export default function App() {
                onClick={() => setLayout('topics')}
                className={`p-2 rounded-md transition-all ${
                  layout === 'topics'
-                   ? 'bg-neutral-900 text-orange-400'
-                   : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50'
+                 ? 'bg-surface text-brand-400 border border-brand-500'
+                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
                }`}
                title="Topic Groups (@tags)"
              >
@@ -1187,8 +1220,8 @@ export default function App() {
              onClick={() => setShowAICoPilot(!showAICoPilot)}
              className={`p-2 border rounded-lg transition-all ${
                showAICoPilot 
-                 ? 'bg-orange-600/10 border-orange-500/30 text-orange-400' 
-                 : 'bg-neutral-950 border-neutral-900 text-neutral-400 hover:text-neutral-200'
+                 ? 'bg-brand-600/10 border-brand-500/30 text-brand-400' 
+                 : 'bg-panel border border-border text-slate-400 hover:text-slate-200'
              }`}
              title="OmniRoute AI Co-Pilot"
            >
@@ -1257,6 +1290,7 @@ export default function App() {
 
         </div>
       </div>
+      </div>
 
       {/* Full-screen Settings page */}
       <SettingsPage
@@ -1319,6 +1353,10 @@ export default function App() {
         />
       )}
 
+      {/* Startup splash overlay (fades out once boot completes) */}
+      {splashVisible && (
+        <SplashScreen isLoading={isBooting} onFinish={() => setSplashVisible(false)} />
+      )}
     </div>
   );
 }

@@ -44,7 +44,7 @@ const TAG_STYLES: Record<LinkKind, { label: string; cls: string; icon: React.Rea
   },
   semantic: {
     label: 'Semantic',
-    cls: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
+    cls: 'bg-brand-500/10 text-brand-400 border-brand-500/30',
     icon: <Sparkles className="w-2.5 h-2.5" />,
   },
   block: {
@@ -65,7 +65,7 @@ const TAG_STYLES: Record<LinkKind, { label: string; cls: string; icon: React.Rea
 };
 
 const CARD_CLS =
-  'flex items-center gap-2.5 bg-slate-950/60 border border-slate-850/80 hover:border-orange-500/30 hover:bg-slate-900/40 p-2 rounded-lg cursor-pointer transition-all';
+  'flex items-center gap-2.5 bg-surface border border-border hover:border-brand-500/30 hover:bg-surface-hover p-2 rounded-lg cursor-pointer transition-all';
 
 const APPROVE_CLS =
   'flex items-center gap-1 px-2 py-1 text-[10px] font-bold rounded-md border transition-all bg-emerald-500/10 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20';
@@ -242,18 +242,18 @@ export const LinkHub: React.FC<LinkHubProps> = ({
   );
 
   return (
-    <div className="relative h-full flex flex-col overflow-hidden">
+    <div className="relative h-full flex flex-col overflow-hidden bg-panel">
       <div className="px-6 py-2 border-b border-slate-900/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 shrink-0">
-            <Link2 className="w-3.5 h-3.5 text-orange-400" /> Links
+            <Link2 className="w-3.5 h-3.5 text-brand-400" /> Links
           </h3>
           <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg p-0.5">
             <button
               onClick={() => setActiveTab('active')}
               className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold rounded-md transition-all ${
                 activeTab === 'active'
-                  ? 'bg-slate-800 text-orange-400 shadow-sm'
+                  ? 'bg-slate-800 text-brand-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -261,7 +261,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
               <span
                 className={`rounded-md px-1 text-[9px] font-bold ${
                   activeTab === 'active'
-                    ? 'bg-orange-500/20 text-orange-300'
+                    ? 'bg-brand-500/20 text-brand-300'
                     : 'bg-slate-800 text-slate-500'
                 }`}
               >
@@ -313,7 +313,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
           <button
             onClick={onCollapse}
             title="Collapse links panel"
-            className="text-[10px] text-slate-600 hover:text-orange-400 transition-colors"
+            className="text-[10px] text-slate-600 hover:text-brand-400 transition-colors"
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
@@ -321,7 +321,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
             onClick={handleRefresh}
             disabled={isLoading}
             title="Refresh all link types"
-            className="text-[10px] text-slate-500 hover:text-orange-400 transition-colors flex items-center gap-1 disabled:opacity-50"
+            className="text-[10px] text-slate-500 hover:text-brand-400 transition-colors flex items-center gap-1 disabled:opacity-50"
           >
             <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} /> Refresh
           </button>
@@ -456,13 +456,13 @@ export const LinkHub: React.FC<LinkHubProps> = ({
               {keywords.map((kw) => (
                 <span
                   key={kw.toLowerCase()}
-                  className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full border bg-amber-500/10 border-amber-500/30 text-amber-300 text-[10px] font-semibold"
+                  className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-none border bg-amber-500/10 border-amber-500/30 text-amber-300 text-[10px] font-semibold"
                 >
                   {kw}
                   <button
                     onClick={() => onDeleteKeyword(kw)}
                     title={`Delete keyword "${kw}" from the note`}
-                    className="p-0.5 rounded-full text-amber-400/60 hover:text-red-400 hover:bg-red-500/20 transition-colors"
+                    className="p-0.5 rounded-none text-amber-400/60 hover:text-red-400 hover:bg-red-500/20 transition-colors"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -587,7 +587,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
                     </div>
                     {m.matched_text && (
                       <div
-                        className="mt-1 text-[10px] text-orange-300/80 line-clamp-2 whitespace-normal border-l-2 border-orange-500/40 pl-2 cursor-pointer"
+                        className="mt-1 text-[10px] text-brand-300/80 line-clamp-2 whitespace-normal border-l-2 border-brand-500/40 pl-2 cursor-pointer"
                         title={
                           m.matched_block_id
                             ? 'Jump to the passage in this note that matched'

@@ -91,7 +91,7 @@ export const ReviewWindow: React.FC = () => {
     <div className="h-screen bg-neutral-950 text-neutral-200 flex flex-col overflow-hidden">
       <div className="px-6 py-4 border-b border-neutral-900 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="p-1.5 bg-orange-500/10 border border-orange-500/20 rounded-md text-orange-400">
+          <div className="p-1.5 bg-brand-500/10 border border-brand-500/20 rounded-md text-brand-400">
             <FileText className="w-4 h-4" />
           </div>
           <div>
@@ -122,7 +122,7 @@ export const ReviewWindow: React.FC = () => {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-1.5 py-0.5 rounded">
                       {mention.targetNoteId}
                     </span>
                   </div>
@@ -179,7 +179,7 @@ export const ReviewWindow: React.FC = () => {
             className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${
               pendingCount === 0
                 ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
-                : 'bg-orange-500 hover:bg-orange-400 text-neutral-950'
+                : 'bg-brand-500 hover:bg-brand-400 text-neutral-950'
             }`}
           >
             {isApplying ? 'Applying…' : `Apply ${pendingCount} Link${pendingCount === 1 ? '' : 's'}`}

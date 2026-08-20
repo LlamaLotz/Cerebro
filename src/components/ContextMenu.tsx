@@ -142,7 +142,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs font-medium transition-colors ${
         danger
           ? 'text-rose-300 hover:bg-rose-500/10 hover:text-rose-200'
-          : 'text-slate-200 hover:bg-orange-500/10 hover:text-orange-300'
+          : 'text-slate-200 hover:bg-brand-500/10 hover:text-brand-300'
       }`}
     >
       <Icon className={`w-3.5 h-3.5 ${danger ? 'text-rose-400/80' : 'text-slate-500'}`} />

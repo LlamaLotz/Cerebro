@@ -28,13 +28,13 @@ interface TooltipState {
   exists: boolean;
 }
 
-// Dark-tech palette (matches the 2D graph's legend): active note bright
-// orange, existing notes warm orange, uncreated wiki-link targets slate.
-const COLOR_ACTIVE = '#f97316'; // orange-500
-const COLOR_EXISTS = '#fb923c'; // orange-400
-const COLOR_MISSING = '#475569'; // slate-600
-const COLOR_HOVER = '#fdba74'; // orange-300
-const LINK_COLOR = 'rgba(255, 255, 255, 0.15)';
+// Prism palette (matches the 2D graph's legend): active note primary amber,
+// existing notes lighter amber, uncreated wiki-link targets slate-grey.
+const COLOR_ACTIVE = '#FEB05D'; // brand-500
+const COLOR_EXISTS = '#ffc069'; // brand-400
+const COLOR_MISSING = '#3c3b39'; // slate-grey
+const COLOR_HOVER = '#ffcb85'; // brand-300
+const LINK_COLOR = 'rgba(245, 242, 242, 0.08)'; // off-white, faint
 
 // Node spheres are scaled by backlink/connection count so hubs read at a
 // glance: 1.4..9 world units.
@@ -240,7 +240,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     canvas.height = px;
     const ctx = canvas.getContext('2d')!;
     if (pattern === 'grid') {
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+      ctx.strokeStyle = 'rgba(254, 176, 93, 0.12)';
       ctx.lineWidth = 1;
       const step = px / BG_CELLS;
       for (let i = 0; i <= BG_CELLS; i++) {
@@ -256,7 +256,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
       }
     } else {
       const step = px / 24;
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.32)';
+      ctx.fillStyle = 'rgba(254, 176, 93, 0.22)';
       for (let x = step / 2; x < px; x += step) {
         for (let y = step / 2; y < px; y += step) {
           ctx.beginPath();
@@ -388,13 +388,13 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     // Pill: subtle top-to-bottom gradient + hairline border for a polished,
     // depth-y look instead of a flat slab.
     const grad = ctx.createLinearGradient(0, 0, 0, pillH);
-    grad.addColorStop(0, 'rgba(16, 21, 38, 0.88)');
-    grad.addColorStop(1, 'rgba(4, 7, 16, 0.78)');
+    grad.addColorStop(0, 'rgba(43, 42, 42, 0.88)');
+    grad.addColorStop(1, 'rgba(13, 14, 18, 0.78)');
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.roundRect(0, 0, w, pillH, radius);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
+    ctx.strokeStyle = 'rgba(185, 182, 179, 0.35)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.roundRect(1, 1, w - 2, pillH - 2, radius - 1);
@@ -405,7 +405,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
     ctx.shadowBlur = 10;
     ctx.shadowOffsetY = 2;
-    ctx.fillStyle = '#f8fafc';
+    ctx.fillStyle = '#F5F2F2';
     ctx.textAlign = 'center';
     ctx.fillText(label, w / 2, pillH / 2 + 1);
 
@@ -564,7 +564,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   // library new function references — a changed nodeThreeObject/linkColor
   // reference makes three-forcegraph rebuild every node/link object.
   const linkColor = useCallback(() => LINK_COLOR, []);
-  const particleColor = useCallback(() => 'rgba(251, 146, 60, 0.7)', []);
+  const particleColor = useCallback(() => 'rgba(254, 176, 93, 0.8)', []);
   const handleNodeClick = useCallback(
     (node: any) => onSelectNoteByTitleRef.current(node.title ?? node.id),
     []
@@ -800,7 +800,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
       {/* Header bar */}
       <div className="px-6 py-3.5 border-b border-slate-900/60 bg-slate-950/20 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <Network className="w-4 h-4 text-orange-400" />
+          <Network className="w-4 h-4 text-brand-400" />
           <h2 className="text-sm font-semibold text-slate-100">Knowledge Network</h2>
         </div>
         <div className="text-[10px] text-slate-500 font-medium flex items-center gap-2">
@@ -811,8 +811,8 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
             title="Slowly rotate the camera around the graph"
             className={`p-1.5 rounded-md border transition-colors flex items-center gap-1 ${
               autoRotate
-                ? 'bg-orange-500/20 border-orange-500/50 text-orange-400'
-                : 'bg-slate-900/60 border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50'
+                ? 'bg-brand-500/20 border-brand-500/50 text-brand-400'
+                : 'bg-slate-900/60 border-slate-800/80 text-slate-400 hover:text-brand-400 hover:border-brand-500/50'
             }`}
           >
             <Orbit className="w-3.5 h-3.5" />
@@ -820,7 +820,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
           <button
             onClick={handleResetCamera}
             title="Reset camera to fit all nodes in view"
-            className="p-1.5 rounded-md bg-slate-900/60 border border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1"
+            className="p-1.5 rounded-md bg-slate-900/60 border border-slate-800/80 text-slate-400 hover:text-brand-400 hover:border-brand-500/50 transition-colors flex items-center gap-1"
           >
             <Home className="w-3.5 h-3.5" />
           </button>
@@ -844,7 +844,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
           // no-op). Rotation feel stays the same — left-drag rotate, scroll
           // zoom, right-drag pan.
           controlType="orbit"
-          backgroundColor="#000000"
+          backgroundColor="#0D0E12"
           nodeThreeObject={nodeThreeObject}
           linkColor={linkColor}
           linkWidth={0.8}
@@ -874,7 +874,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
             <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  tooltip.exists ? (tooltip.title.toLowerCase() === activeTitle ? 'bg-orange-500' : 'bg-orange-400') : 'bg-slate-600'
+                  tooltip.exists ? (tooltip.title.toLowerCase() === activeTitle ? 'bg-brand-500' : 'bg-brand-400') : 'bg-slate-600'
                 }`}
               />
               {tooltip.linksCount} connection{tooltip.linksCount === 1 ? '' : 's'}

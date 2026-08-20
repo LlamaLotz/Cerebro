@@ -16,6 +16,19 @@ const normalizeKey = (str: any): string => {
     .trim();
 };
 
+// Prism palette (Neutral Charcoal + Warm Amber): active note primary amber,
+// existing notes lighter amber, uncreated wiki-link targets slate-grey.
+// Mirrors GraphView3D.
+const COLOR_ACTIVE = '#FEB05D'; // brand-500
+const COLOR_EXISTS = '#ffc069'; // brand-400
+const COLOR_MISSING = '#4a4947'; // slate-grey
+const COLOR_HOVER = '#f59e0b'; // brand-600 (hover/pressed)
+const STROKE_COLOR = '#F5F2F2'; // off-white
+const STROKE_EXISTS = '#f59e0b'; // brand-600
+const GRID_COLOR = 'rgba(254, 176, 93, 0.05)';
+const MESH_COLOR = 'rgba(254, 176, 93, 0.18)';
+const LINK_COLOR = 'rgba(150, 147, 143, 0.35)';
+
 interface GraphViewProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   activeNote: NoteFile | null;
@@ -213,7 +226,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .append('path')
       .attr('d', 'M 42 0 L 0 0 0 42')
       .attr('fill', 'none')
-      .attr('stroke', 'rgba(148, 163, 184, 0.14)')
+      .attr('stroke', GRID_COLOR)
       .attr('stroke-width', 1);
 
     const meshPattern = defs
@@ -227,7 +240,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .attr('cx', 1.2)
       .attr('cy', 1.2)
       .attr('r', 1.2)
-      .attr('fill', 'rgba(148, 163, 184, 0.25)');
+      .attr('fill', MESH_COLOR);
 
     const bgRect = gContainer
       .append('rect')
@@ -285,8 +298,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .data(d3Links)
       .enter()
       .append('line')
-      .attr('stroke', '#64748b') // Slate-500
-      .attr('stroke-opacity', 0.5)
+      .attr('stroke', LINK_COLOR)
       .attr('stroke-width', 1.5)
       .attr('stroke-dasharray', (d: any) => (d.targetExists === false ? '4,4' : 'none'));
 
@@ -333,12 +345,12 @@ export const GraphView: React.FC<GraphViewProps> = ({
       .attr('r', (d: any) => Math.max(7, Math.min(20, (d.linksCount || 1) * 1.8 + 6)))
       .attr('fill', (d: any) => {
         const isCurrent = activeNote && d.title && activeNote.title.toLowerCase() === d.title.toLowerCase();
-        if (isCurrent) return '#f97316'; // Active (Orange-500)
-        return d.exists !== false ? '#fb923c' : '#475569';
+        if (isCurrent) return COLOR_ACTIVE;
+        return d.exists !== false ? COLOR_EXISTS : COLOR_MISSING;
       })
       .attr('stroke', (d: any) => {
         const isCurrent = activeNote && d.title && activeNote.title.toLowerCase() === d.title.toLowerCase();
-        return isCurrent ? '#ffffff' : '#c2410c';
+        return isCurrent ? STROKE_COLOR : STROKE_EXISTS;
       })
       .attr('stroke-width', (d: any) => {
         const isCurrent = activeNote && d.title && activeNote.title.toLowerCase() === d.title.toLowerCase();
@@ -371,7 +383,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         .transition()
         .duration(150)
         .attr('r', Math.max(10, Math.min(24, (d.linksCount || 1) * 1.8 + 10)))
-        .attr('fill', '#ea580c');
+        .attr('fill', COLOR_HOVER);
 
       d3.select(this).select('text')
         .transition()
@@ -386,7 +398,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
         .transition()
         .duration(150)
         .attr('r', Math.max(7, Math.min(20, (d.linksCount || 1) * 1.8 + 6)))
-        .attr('fill', isCurrent ? '#f97316' : (d.exists !== false ? '#fb923c' : '#475569'));
+        .attr('fill', isCurrent ? COLOR_ACTIVE : (d.exists !== false ? COLOR_EXISTS : COLOR_MISSING));
 
       d3.select(this).select('text')
         .transition()
@@ -525,7 +537,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
       {/* Header bar */}
       <div className="px-6 py-3.5 border-b border-slate-900/60 bg-slate-950/60 flex items-center justify-between shrink-0 z-10">
         <div className="flex items-center gap-2">
-          <Network className="w-4 h-4 text-orange-400" />
+          <Network className="w-4 h-4 text-brand-400" />
           <h2 className="text-sm font-semibold text-slate-100">Knowledge Network</h2>
         </div>
         <div className="text-[10px] text-slate-500 font-medium flex items-center gap-2">
@@ -534,14 +546,14 @@ export const GraphView: React.FC<GraphViewProps> = ({
           <button
             onClick={handleResetGraph}
             title="Reset graph view & re-arrange nodes"
-            className="p-1.5 rounded-md bg-slate-900/80 border border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1"
+            className="p-1.5 rounded-md bg-slate-900/80 border border-slate-800/80 text-slate-400 hover:text-brand-400 hover:border-brand-500/50 transition-colors flex items-center gap-1"
           >
             <Home className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleResetGraph}
             title="Re-animate physics simulation"
-            className="p-1.5 rounded-md bg-slate-900/80 border border-slate-800/80 text-slate-400 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1"
+            className="p-1.5 rounded-md bg-slate-900/80 border border-slate-800/80 text-slate-400 hover:text-brand-400 hover:border-brand-500/50 transition-colors flex items-center gap-1"
           >
             <RotateCw className="w-3.5 h-3.5" />
           </button>
@@ -556,11 +568,11 @@ export const GraphView: React.FC<GraphViewProps> = ({
         <div className="absolute bottom-4 left-4 bg-slate-900/90 border border-slate-800/80 px-3.5 py-2.5 rounded-xl shadow-lg text-[10px] space-y-1.5 backdrop-blur-md z-10">
           <span className="font-semibold text-slate-400 block mb-1">GRAPH LEGEND</span>
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
+            <div className="w-2.5 h-2.5 rounded-full bg-brand-500 border border-white" />
             <span className="text-slate-200">Active Note</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-orange-400 border border-orange-700" />
+            <div className="w-2.5 h-2.5 rounded-full bg-brand-400 border border-brand-700" />
             <span className="text-slate-200">Existing Notes</span>
           </div>
           <div className="flex items-center gap-2">

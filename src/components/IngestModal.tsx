@@ -61,7 +61,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
           <h2 className="text-base font-bold text-neutral-100 flex items-center gap-2">
-            <Play className="w-4.5 h-4.5 text-orange-400 fill-current" /> Ingest New Content
+            <Play className="w-4.5 h-4.5 text-brand-400 fill-current" /> Ingest New Content
           </h2>
           <button 
             onClick={onClose}
@@ -79,7 +79,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
               onClick={() => setIngestType('url')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition-all ${
                 ingestType === 'url'
-                  ? 'bg-neutral-800 text-orange-400 shadow-sm'
+                  ? 'bg-neutral-800 text-brand-400 shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
               }`}
             >
@@ -89,7 +89,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
               onClick={() => setIngestType('file')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-md transition-all ${
                 ingestType === 'file'
-                  ? 'bg-neutral-800 text-orange-400 shadow-sm'
+                  ? 'bg-neutral-800 text-brand-400 shadow-sm'
                   : 'text-neutral-400 hover:text-neutral-200'
               }`}
             >
@@ -107,7 +107,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                    <button
                      onClick={() => setYtMethod('yt-dlp')}
                      className={`px-2 py-1 text-[10px] font-bold rounded transition-all ${
-                       ytMethod === 'yt-dlp' ? 'bg-neutral-800 text-orange-400' : 'text-neutral-500 hover:text-neutral-300'
+                       ytMethod === 'yt-dlp' ? 'bg-neutral-800 text-brand-400' : 'text-neutral-500 hover:text-neutral-300'
                      }`}
                    >
                      Captions
@@ -115,7 +115,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                    <button
                      onClick={() => setYtMethod('whisper')}
                      className={`px-2 py-1 text-[10px] font-bold rounded transition-all ${
-                       ytMethod === 'whisper' ? 'bg-neutral-800 text-orange-400' : 'text-neutral-500 hover:text-neutral-300'
+                       ytMethod === 'whisper' ? 'bg-neutral-800 text-brand-400' : 'text-neutral-500 hover:text-neutral-300'
                      }`}
                    >
                      Whisper
@@ -130,7 +130,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                  value={urlValue}
                  onChange={(e) => setUrlValue(e.target.value)}
                  placeholder="https://www.youtube.com/watch?v=..."
-                 className="w-full bg-neutral-950 border border-neutral-800 focus:border-orange-500 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none"
+                 className="w-full bg-neutral-950 border border-neutral-800 focus:border-brand-500 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none"
                />
              </div>
            ) : (
@@ -151,7 +151,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                 />
                 <button
                   onClick={handleBrowseFile}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition-colors border border-slate-750 shrink-0"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition-colors border border-slate-700 shrink-0"
                 >
                   Browse File
                 </button>
@@ -170,7 +170,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
                        key={mode.value}
                        onClick={() => setOcrMode(mode.value as 'A' | 'O' | 'N')}
                        className={`px-2 py-1 text-[10px] font-bold rounded transition-all ${
-                         ocrMode === mode.value ? 'bg-neutral-800 text-orange-400' : 'text-neutral-500 hover:text-neutral-300'
+                         ocrMode === mode.value ? 'bg-neutral-800 text-brand-400' : 'text-neutral-500 hover:text-neutral-300'
                        }`}
                      >
                        {mode.label}
@@ -182,11 +182,11 @@ export const IngestModal: React.FC<IngestModalProps> = ({
           )}
 
           {/* Info Badge */}
-           <div className="p-3 bg-neutral-950/50 border border-neutral-850 rounded-xl flex gap-2.5">
-             <AlertCircle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+           <div className="p-3 bg-neutral-950/50 border border-neutral-800 rounded-xl flex gap-2.5">
+             <AlertCircle className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
              <div className="text-[10px] text-neutral-400 leading-relaxed">
                <span className="font-semibold text-neutral-300 block mb-0.5">FOLDER SEGREGATION NOTICE:</span>
-               Clean markdown notes will be output directly into your selected Prism notes vault. All intermediate metadata, raw transcribing tracks, and downloaded assets are safely kept in your isolated <code className="bg-neutral-900 text-orange-300 px-1 py-0.2 rounded font-mono">raw_service_files</code> directory.
+               Clean markdown notes will be output directly into your selected Prism notes vault. All intermediate metadata, raw transcribing tracks, and downloaded assets are safely kept in your isolated <code className="bg-neutral-900 text-brand-300 px-1 py-0.2 rounded font-mono">raw_service_files</code> directory.
              </div>
            </div>
          </div>
@@ -201,7 +201,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
            </button>
            <button
              onClick={handleStartIngest}
-             className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all border border-orange-400/20"
+             className="px-4 py-2 bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-md shadow-brand-500/10 hover:shadow-brand-500/20 transition-all border border-brand-400/20"
            >
              <Play className="w-3.5 h-3.5 fill-current" /> Start Ingestion
            </button>

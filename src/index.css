@@ -1,13 +1,191 @@
 @import "tailwindcss";
 
+@theme {
+  /* Neutral Charcoal Grey ramp — remaps Tailwind's blue-tinted slate-*
+     scale to warm charcoal greys so every slate class in the app renders
+     as a crisp neutral grey (no blue tint). */
+  --color-slate-50: #fafafa;
+  --color-slate-100: #f4f4f5;
+  --color-slate-200: #e4e4e7;
+  --color-slate-300: #d4d4d8;
+  --color-slate-400: #a1a1aa;     /* text-secondary — subdued labels */
+  --color-slate-500: #71717a;
+  --color-slate-600: #52525b;
+  --color-slate-700: #3f3f46;
+  --color-slate-800: #27272a;
+  --color-slate-900: #1c1c1e;     /* bg-secondary — panels & editor */
+  --color-slate-950: #121214;     /* bg-primary — workspace */
+
+  /* Neutral ramp — same warm charcoal greys, used by modals/overlays. */
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f4f4f5;
+  --color-neutral-200: #e4e4e7;
+  --color-neutral-300: #d4d4d8;
+  --color-neutral-400: #a1a1aa;
+  --color-neutral-500: #71717a;
+  --color-neutral-600: #52525b;
+  --color-neutral-700: #3f3f46;
+  --color-neutral-800: #27272a;
+  --color-neutral-900: #1c1c1e;
+  --color-neutral-950: #121214;
+
+  /* Surfaces & Backgrounds (Neutral Charcoal) */
+  --color-base: #121214;          /* bg-primary — App root, 2D/3D canvas, titlebar */
+  --color-panel: #1c1c1e;         /* bg-secondary — Sidebar, docked drawers, settings nav */
+  --color-surface: #2B2A2A;       /* bg-tertiary — Raised cards, active rows, dialog panels */
+  --color-surface-hover: #3A3939; /* Hovered rows, segmented control track */
+  --color-border: #383737;        /* Crisp neutral borders, dividers, hairline outlines */
+  --color-border-active: rgba(254, 176, 93, 0.4);
+
+  /* Brand Accent: Warm Amber Gold (full ramp so every shade resolves) */
+  --color-brand-50: #fff9f0;
+  --color-brand-100: #ffefd9;
+  --color-brand-200: #ffdfb3;
+  --color-brand-300: #ffcb85;
+  --color-brand-400: #ffc069;
+  --color-brand-500: #FEB05D;     /* accent-primary — buttons, active tabs, nodes */
+  --color-brand-600: #f59e0b;     /* accent-hover — hover gold */
+  --color-brand-700: #c97f0a;
+  --color-brand-800: #9a610c;
+  --color-brand-900: #6d4408;
+  --color-brand-950: #3a2304;
+  --color-brand-glow: rgba(254, 176, 93, 0.15);
+
+  /* Muted Blue — tags & badges */
+  --color-accent-secondary: #5A7ACD;
+
+  /* Text & Foreground */
+  --color-offwhite: #F5F2F2;      /* text-primary — Off-White / Light Grey */
+  --color-text-hi: #F5F2F2;       /* Primary headings, titles */
+  --color-text-body: #C2C0C0;     /* Markdown reading text, note body */
+  --color-text-muted: #a1a1aa;    /* text-secondary — timestamps, keyboard shortcuts */
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Instrument Sans', 'Inter', sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+  /* Enforce zero border radius globally for structural geometric sharpness.
+     `--radius-full` stays large so genuinely-circular elements (status dots,
+     avatars, legend swatches) keep their circle. */
+  --radius-none: 0px;
+  --radius-sm: 0px;
+  --radius: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+  --radius-full: 9999px;
+}
+
+/* Base Body Styles */
+body {
+  background-color: var(--color-base);
+  color: var(--color-text-body);
+  font-family: var(--font-sans);
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* Display & section headers use the display face (Instrument Sans) */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+}
+
+/* Force strict 0px radius on standard UI components. Cards, buttons, inputs,
+   modals, tabs and window chrome must be razor-sharp. */
+div,
+button,
+input,
+textarea,
+select,
+dialog,
+header,
+aside,
+section,
+article {
+  border-radius: 0 !important;
+}
+
+/* Circular elements specifically intended to be complete circles (avatars,
+   status dots, graph legend swatches) keep their circle despite the reset. */
+.rounded-full {
+  border-radius: 9999px !important;
+}
+
+/* Neutral Charcoal theme extras (kept in `@layer base` so Tailwind utility
+   classes like `border-transparent`, `hover:border-slate-800`, `border-0`
+   still win — these are only defaults for unstyled controls). */
 @layer base {
-  body {
-    font-family: 'Inter', sans-serif;
-    color-scheme: dark;
+  /* Crisp 1px neutral borders on interactive controls */
+  button,
+  input,
+  textarea,
+  select {
+    border: 1px solid var(--color-border);
   }
 
-  code, pre {
-    font-family: 'Fira Code', monospace;
+  /* Square slider thumbs — sharp block geometry, warm amber, matching the
+     square toggle switches in Settings. */
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: var(--color-slate-800);
+    cursor: pointer;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px; /* center the 14px thumb on the 4px track */
+    border-radius: 2px;
+    background: var(--color-brand-500);
+    border: 1px solid var(--color-brand-600);
+    cursor: pointer;
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--color-brand-500);
+    border: 1px solid var(--color-brand-600);
+    cursor: pointer;
+  }
+  input[type='range']::-moz-range-track {
+    height: 4px;
+    background: var(--color-slate-800);
+  }
+
+  /* Button hover glows — amber border highlight + soft gold glow across
+     the app. Layered so per-button hover utilities still take precedence. */
+  button:not(:disabled):hover {
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+  }
+  input[type='range']:hover::-webkit-slider-thumb {
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+  }
+  input[type='range']:hover::-moz-range-thumb {
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+  }
+  button:not(:disabled):active {
+    border-color: var(--color-brand-600);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
   }
 }
 
@@ -21,55 +199,51 @@
   display: none;
 }
 
-/* Custom scrollbar for dark theme */
+/* Custom Minimalist Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--color-base);
 }
-
 ::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.8);
-  border-radius: 4px;
+  background: var(--color-border);
+  border-radius: 0;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(71, 85, 105, 1);
+  background: var(--color-brand-500);
 }
 
-/* Wiki-link hover effects */
+/* Wiki Links */
 .wiki-link {
-  color: #fb923c;
-  background-color: rgba(251, 146, 60, 0.1);
+  color: var(--color-brand-500);
+  background: rgba(254, 176, 93, 0.08);
+  border-bottom: 1px solid rgba(254, 176, 93, 0.35);
+  padding: 1px 4px;
+  border-radius: 0;
+  transition: all 0.15s ease;
+}
+.wiki-link:hover {
+  background: rgba(254, 176, 93, 0.18);
+  border-bottom-color: var(--color-brand-500);
+}
+.wiki-link-uncreated {
+  color: #858383;
+  border-bottom: 1px dashed #858383;
+}
+
+/* Standard markdown links to external URLs (preview mode): styled, not navigable */
+.wiki-link-external {
+  color: #C2C0C0;
+  background-color: rgba(194, 192, 192, 0.08);
   padding: 1px 6px;
-  border-radius: 4px;
-  border-bottom: 1px solid rgba(251, 146, 60, 0.4);
+  border-radius: 0;
+  border-bottom: 1px solid rgba(194, 192, 192, 0.4);
   font-weight: 500;
-  transition: all 0.15s ease-in-out;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-}
-
-.wiki-link:hover {
-  background-color: rgba(251, 146, 60, 0.25);
-  border-bottom-color: #fb923c;
-  text-shadow: 0 0 8px rgba(251, 146, 60, 0.5);
-}
-
-.wiki-link-uncreated {
-  color: #94a3b8;
-  background-color: rgba(148, 163, 184, 0.08);
-  border-bottom: 1px dashed rgba(148, 163, 184, 0.4);
-}
-
-.wiki-link-uncreated:hover {
-  color: #f1f5f9;
-  background-color: rgba(148, 163, 184, 0.2);
 }
 
 /* Performance: layout containment so off-screen lines don't trigger browser layout recalculations */
@@ -113,7 +287,7 @@
 /* Block-level jump flash highlight (CodeMirror line decorations) */
 @keyframes blockFlash {
   from {
-    background-color: rgba(99, 102, 241, 0.4);
+    background-color: rgba(254, 176, 93, 0.4);
   }
   to {
     background-color: transparent;
@@ -124,7 +298,7 @@
    on consecutive jumps restarts the flash even on the same line. */
 @keyframes blockFlashAlt {
   from {
-    background-color: rgba(99, 102, 241, 0.4);
+    background-color: rgba(254, 176, 93, 0.4);
   }
   to {
     background-color: transparent;
@@ -137,7 +311,7 @@
   animation-duration: 1.5s;
   animation-timing-function: ease-out;
   animation-fill-mode: forwards;
-  border-radius: 2px;
+  border-radius: 0;
 }
 
 .cm-line.block-highlight.flash-a,
@@ -150,42 +324,25 @@
   animation-name: blockFlashAlt;
 }
 
-/* Standard markdown links to external URLs (preview mode): styled, not navigable */
-.wiki-link-external {
-  color: #94a3b8;
-  background-color: rgba(148, 163, 184, 0.08);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.4);
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
 /* Find-in-note match highlights (CodeMirror decorations + preview spans) */
 .search-match {
-  background-color: rgba(251, 146, 60, 0.35);
-  border-radius: 2px;
+  background: rgba(254, 176, 93, 0.3);
+  border-radius: 0;
   color: #fff;
 }
 
 .search-match-active {
-  background-color: rgba(251, 146, 60, 0.9);
-  color: #0f172a;
-  box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.9);
-  border-radius: 2px;
+  background: #FEB05D;
+  color: #121214;
+  border-radius: 0;
 }
 
-/* "@Tag" mentions in the note: visually distinct from wiki links and from
-   local keywords (they're vault-wide groupings, not notes — and are never
-   link-suggested by the engine). Teal, to tell them apart from the yellow
-   ---keyword--- pills. */
+/* Semantic Tag Overrides (sharp badges) — muted blue accent for tags */
 .topic-tag {
-  color: #2dd4bf;
-  background-color: rgba(45, 212, 191, 0.08);
-  border: 1px solid rgba(45, 212, 191, 0.3);
-  border-radius: 9999px;
+  color: #5A7ACD;
+  background: rgba(90, 122, 205, 0.1);
+  border: 1px solid rgba(90, 122, 205, 0.25);
+  border-radius: 0;
   padding: 0 6px;
   font-size: 0.78em;
   font-weight: 600;
@@ -199,9 +356,9 @@
    everywhere. They stay hidden in preview mode (stripped by the formatter). */
 .keyword-tag {
   color: #fbbf24;
-  background-color: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 9999px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 0;
   padding: 0 6px;
   margin: 0 2px;
   font-size: 0.78em;
@@ -209,4 +366,34 @@
   display: inline-flex;
   align-items: center;
   line-height: 1.4;
+}
+
+/* Splash screen entrance */
+@keyframes splash-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.splash-in {
+  animation: splash-in 0.5s ease-out both;
+}
+
+@keyframes logo-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.splash-logo {
+  animation: logo-float 3.2s ease-in-out infinite;
 }
