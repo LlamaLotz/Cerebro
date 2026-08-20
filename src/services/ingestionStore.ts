@@ -90,7 +90,7 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
       setIsMinimized(true);
     }
     setLogs((prev) => [...prev, full]);
-    // Persist warnings/errors to disk for troubleshooting (~/.cerebro/ingestion.log)
+    // Persist warnings/errors to disk for troubleshooting (~/.prism/ingestion.log)
     if (entry.level === 'error' || entry.level === 'warn') {
       tauriAPI.appendIngestionLog(entry.level, entry.message).catch(() => {});
     }

@@ -392,9 +392,9 @@ export const Editor: React.FC<EditorProps> = ({
     // A user who explicitly toggled the LinkHub before (key stored) keeps
     // their choice; otherwise the Appearance setting wins.
     () =>
-      localStorage.getItem('cerebro_linkhub_visible') === null
+      localStorage.getItem('prism_linkhub_visible') === null
         ? settings.appearance.linkHubVisibleByDefault
-        : localStorage.getItem('cerebro_linkhub_visible') !== 'false'
+        : localStorage.getItem('prism_linkhub_visible') !== 'false'
   );
   const [showNoteMeta, setShowNoteMeta] = useState(false);
   // Time Machine: version timeline for the active note (base snapshot + every
@@ -413,19 +413,19 @@ export const Editor: React.FC<EditorProps> = ({
   // Split-in-progress flag (the section files are created one at a time).
   const [isSplitting, setIsSplitting] = useState(false);
   const [linkHubHeight, setLinkHubHeight] = useState(() => {
-    const saved = Number(localStorage.getItem('cerebro_linkhub_height'));
+    const saved = Number(localStorage.getItem('prism_linkhub_height'));
     return Number.isFinite(saved) && saved > 0
       ? saved
       : settings.appearance.linkHubDefaultHeight;
   });
   const toggleLinkHub = (visible: boolean) => {
     setLinkHubVisible(visible);
-    localStorage.setItem('cerebro_linkhub_visible', String(visible));
+    localStorage.setItem('prism_linkhub_visible', String(visible));
   };
   const resizeLinkHub = (delta: number) => {
     setLinkHubHeight((h) => {
       const next = Math.min(520, Math.max(140, h - delta));
-      localStorage.setItem('cerebro_linkhub_height', String(next));
+      localStorage.setItem('prism_linkhub_height', String(next));
       return next;
     });
   };

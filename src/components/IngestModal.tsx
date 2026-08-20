@@ -186,7 +186,7 @@ export const IngestModal: React.FC<IngestModalProps> = ({
              <AlertCircle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
              <div className="text-[10px] text-neutral-400 leading-relaxed">
                <span className="font-semibold text-neutral-300 block mb-0.5">FOLDER SEGREGATION NOTICE:</span>
-               Clean markdown notes will be output directly into your selected Cerebro notes vault. All intermediate metadata, raw transcribing tracks, and downloaded assets are safely kept in your isolated <code className="bg-neutral-900 text-orange-300 px-1 py-0.2 rounded font-mono">raw_service_files</code> directory.
+               Clean markdown notes will be output directly into your selected Prism notes vault. All intermediate metadata, raw transcribing tracks, and downloaded assets are safely kept in your isolated <code className="bg-neutral-900 text-orange-300 px-1 py-0.2 rounded font-mono">raw_service_files</code> directory.
              </div>
            </div>
          </div>

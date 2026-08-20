@@ -275,7 +275,7 @@ export const tauriAPI = {
     }
   },
   // --- Rust runtime config bridge ------------------------------------------
-  // Settings are persisted by Rust to ~/.cerebro/settings.json (single source
+  // Settings are persisted by Rust to ~/.prism/settings.json (single source
   // of truth), with localStorage kept only as a legacy migration source.
   // Returns null when no config file exists yet (first run / corrupt file) so
   // the frontend can migrate legacy localStorage settings before saving.

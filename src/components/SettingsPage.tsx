@@ -264,7 +264,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
           ))}
         </nav>
         <div className="px-5 py-4 border-t border-slate-900 text-[10px] text-slate-600 leading-relaxed">
-          Settings are persisted to <span className="font-mono">~/.cerebro/settings.json</span> by
+          Settings are persisted to <span className="font-mono">~/.prism/settings.json</span> by
           the Rust runtime.
         </div>
       </aside>
@@ -326,7 +326,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
                     </button>
                   </div>
                   <div className="text-xs text-slate-500 mb-3">
-                    Cerebro uses a built-in Python extractor. Click{' '}
+                    Prism uses a built-in Python extractor. Click{' '}
                     <strong className="text-slate-300">Run Auto-Installer</strong> to set up FFmpeg,
                     Python 3.12, yt-dlp, faster-whisper and docling. <code>{'{vault_path}'}</code>{' '}
                     is replaced with the vault path at runtime.
@@ -455,7 +455,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ isOpen, onClose, set
             {/* ------------------------ Appearance ----------------------- */}
             {section === 'appearance' && (
               <div>
-                <SectionTitle hint="How Cerebro looks and what it opens to on launch.">
+                <SectionTitle hint="How Prism looks and what it opens to on launch.">
                   Appearance
                 </SectionTitle>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">

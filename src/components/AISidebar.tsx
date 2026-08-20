@@ -60,7 +60,7 @@ export const AISidebar: React.FC<AISidebarProps> = ({
       const fullMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
         {
           role: 'system',
-          content: `You are Cerebro AI, a professional knowledge-base assistant integrated directly into the user's Obsidian-like markdown note-taking workspace.
+          content: `You are Prism AI, a professional knowledge-base assistant integrated directly into the user's Obsidian-like markdown note-taking workspace.
 ${
   note
     ? `You have access to the user's active note titled "${note.title}". Active note contents:\n"""\n${note.content ?? ''}\n"""`
@@ -171,7 +171,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
               <Sparkles className="w-5 h-5" />
             </div>
             <div className="space-y-1 max-w-xs mx-auto">
-              <h3 className="text-xs font-semibold text-slate-300">Ask Cerebro Co-Pilot</h3>
+              <h3 className="text-xs font-semibold text-slate-300">Ask Prism Co-Pilot</h3>
               <p className="text-[10px] text-slate-500 leading-relaxed">
                 Connect ideas, find links, generate summaries, or chat recursively with your note's context using OmniRoute routing.
               </p>
@@ -226,7 +226,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
                 className={`flex flex-col max-w-[85%] ${isUser ? 'ml-auto items-end' : 'mr-auto items-start'}`}
               >
                 <span className="text-[9px] font-bold text-slate-500 mb-0.5">
-                  {isUser ? 'YOU' : 'CEREBRO AI'}
+                  {isUser ? 'YOU' : 'PRISM AI'}
                 </span>
 <div 
                    className={`text-xs p-3 rounded-2xl leading-relaxed ${
@@ -246,7 +246,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
         {/* Loading Indicator */}
         {isLoading && (
           <div className="flex flex-col items-start max-w-[85%] mr-auto">
-            <span className="text-[9px] font-bold text-slate-500 mb-0.5">CEREBRO AI</span>
+            <span className="text-[9px] font-bold text-slate-500 mb-0.5">PRISM AI</span>
             <div className="bg-slate-900 border border-slate-850 p-3.5 rounded-2xl rounded-tl-none flex items-center gap-2.5">
               <Loader2 className="w-4 h-4 text-orange-400 animate-spin" />
               <span className="text-xs text-slate-400">Consulting OmniRoute routing...</span>
@@ -280,7 +280,7 @@ Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, o
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder={note ? "Chat with active note context..." : "Ask Cerebro AI anything..."}
+          placeholder={note ? "Chat with active note context..." : "Ask Prism AI anything..."}
           className="flex-1 bg-slate-900/60 border border-slate-850 focus:border-slate-700 text-xs rounded-xl px-3.5 py-2 text-slate-200 focus:outline-none transition-colors"
         />
           <button

@@ -48,7 +48,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // swap the pattern in place without re-running the whole force layout.
   const bgRectRef = useRef<d3.Selection<SVGRectElement, unknown, null, undefined> | null>(null);
 
-  const POSITIONS_KEY = 'cerebro_graph_positions';
+  const POSITIONS_KEY = 'prism_graph_positions';
 
   // Load saved positions safely
   const loadPositions = (): Record<string, { x: number; y: number }> => {
@@ -499,7 +499,7 @@ export const GraphView: React.FC<GraphViewProps> = ({
   // Header Manual Reset Button
   const handleResetGraph = () => {
     localStorage.removeItem(POSITIONS_KEY);
-    localStorage.removeItem('cerebro_graph_zoom');
+    localStorage.removeItem('prism_graph_zoom');
     
     // Fit the whole graph into view immediately — the old behavior zoomed to
     // identity (pane center only), so Home appeared to shrink the graph to

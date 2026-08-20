@@ -3,8 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 // Fire-and-forget app logging. Entries are batched and flushed every
 // FLUSH_INTERVAL_MS so high-frequency actions (autosaves, jumps) don't
 // hammer the IPC bridge. Rust writes them to:
-//   ~/.cerebro/appLogs/YYYY-MM-DD/actions.log  (info)
-//   ~/.cerebro/appLogs/YYYY-MM-DD/errors.log   (warn/error)
+//   ~/.prism/appLogs/YYYY-MM-DD/actions.log  (info)
+//   ~/.prism/appLogs/YYYY-MM-DD/errors.log   (warn/error)
 type LogLevel = 'INFO' | 'WARN' | 'ERROR';
 
 const FLUSH_INTERVAL_MS = 500;

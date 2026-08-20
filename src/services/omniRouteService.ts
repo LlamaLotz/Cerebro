@@ -63,7 +63,7 @@ export async function summarizeNote(
   noteTitle: string,
   noteContent: string
 ): Promise<string> {
-  const systemPrompt = `You are an AI assistant built inside a neural markdown note-taking app named Cerebro.
+  const systemPrompt = `You are an AI assistant built inside a neural markdown note-taking app named Prism.
 Your task is to summarize the note provided by the user. 
 Format your summary beautifully in Markdown using bullet points, short paragraphs, and key takeaways.`;
 
@@ -86,7 +86,7 @@ export async function suggestConnections(
 ): Promise<string> {
   const existingNotesList = allNotes.map((n) => n.title).join(', ');
 
-  const systemPrompt = `You are Cerebro's AI Link Suggester. Your job is to analyze the user's active note and suggest which other notes in their vault they should connect to using the [[Note Title]] wiki-link syntax.
+  const systemPrompt = `You are Prism's AI Link Suggester. Your job is to analyze the user's active note and suggest which other notes in their vault they should connect to using the [[Note Title]] wiki-link syntax.
 You will be given the title and content of the active note, and a list of all other existing note titles in the vault.
 Provide your response in Markdown, explaining WHY each suggestion makes sense, and provide the exact [[Note Title]] wiki-link so the user can easily copy and paste it into their note. Keep it concise.`;
 
@@ -114,7 +114,7 @@ export async function suggestMetadata(
   noteTitle: string,
   noteContent: string
 ): Promise<string> {
-  const systemPrompt = `You are Cerebro's Metadata Expert. Your task is to analyze the active note and suggest a set of relevant hashtags (e.g. #productivity, #coding, #philosophy) and a quick YAML frontmatter header block that the user can paste at the top of their markdown file. Include a short description and suggested categories.`;
+  const systemPrompt = `You are Prism's Metadata Expert. Your task is to analyze the active note and suggest a set of relevant hashtags (e.g. #productivity, #coding, #philosophy) and a quick YAML frontmatter header block that the user can paste at the top of their markdown file. Include a short description and suggested categories.`;
 
   const userPrompt = `Note Title: "${noteTitle}"
 Note Content:

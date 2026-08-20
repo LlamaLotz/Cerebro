@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ====================================================
-echo CEREBRO UNINSTALLER - WINDOWS
+echo PRISM UNINSTALLER - WINDOWS
 echo ====================================================
 
 where python >nul 2>nul

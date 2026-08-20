@@ -5,7 +5,7 @@ import os
 
 def run_orchestrator(option, source):
     # Path to the master extractor script
-    master_script = "/Users/Shiver/Documents/Cerebro/Extractor Final/master_extractor.py"
+    master_script = "/Users/Shiver/Documents/Prism/Extractor Final/master_extractor.py"
     
     # Launch the master extractor
     process = subprocess.Popen(

@@ -40,7 +40,7 @@ interface FolderNode {
   notes: NoteFile[];
 }
 
-const EXPANDED_KEY = 'cerebro_expanded_folders';
+const EXPANDED_KEY = 'prism_expanded_folders';
 
 function countNotes(folder: FolderNode): number {
   return folder.notes.length + folder.children.reduce((n, c) => n + countNotes(c), 0);
@@ -319,7 +319,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="font-extrabold text-white text-base">C</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-orange-400 to-amber-500 leading-none">CEREBRO</h1>
+            <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-orange-400 to-amber-500 leading-none">PRISM</h1>
             <span className="text-[10px] text-slate-500 font-medium">Knowledge & AI Vault</span>
           </div>
         </div>

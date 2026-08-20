@@ -1,4 +1,4 @@
-name: "Release Cerebro Desktop App"
+name: "Release Prism Desktop App"
 
 on:
   push:
@@ -37,8 +37,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__ # Auto-extracts from package.json version
-          releaseName: "Cerebro v__VERSION__"
-          releaseBody: "See the assets below to download Cerebro for your operating system."
+          releaseName: "Prism v__VERSION__"
+          releaseBody: "See the assets below to download Prism for your operating system."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}

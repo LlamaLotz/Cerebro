@@ -20,7 +20,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'cerebro_app_settings';
+const LOCAL_STORAGE_KEY = 'prism_app_settings';
 
 // Reconstructs the D3 graph from the SQLite-served snapshot, adding uncreated
 // nodes for any linked-but-missing titles (same semantics as buildGraphData).
@@ -97,7 +97,7 @@ function graphSignature(g: { nodes: GraphNode[]; links: GraphLink[] }): string {
 
 const DEFAULT_SETTINGS: AppSettings = {
   vaultPath: '',
-  ingestionScript: 'python "/Users/Shiver/Documents/Cerebro/Extractor Final/master_extractor.py" --vault {vault_path}',
+  ingestionScript: 'python "/Users/Shiver/Documents/Prism/Extractor Final/master_extractor.py" --vault {vault_path}',
   omniRoute: {
     apiKey: '',
     baseUrl: 'https://api.omniroute.ai/v1',
@@ -166,7 +166,7 @@ function deepMergeSettings<T>(defaults: T, overrides: Partial<T>): T {
 }
 
 export default function App() {
-  // Cerebro's own dialog system (replaces native alert/confirm/prompt).
+  // Prism's own dialog system (replaces native alert/confirm/prompt).
   const { alert, confirm, prompt } = useDialog();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [notes, setNotes] = useState<NoteFile[]>([]);
@@ -190,15 +190,15 @@ export default function App() {
 
   // Persisted panel sizes
   const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = Number(localStorage.getItem('cerebro_sidebar_width'));
+    const saved = Number(localStorage.getItem('prism_sidebar_width'));
     return Number.isFinite(saved) && saved > 0 ? saved : 264;
   });
   const [aiWidth, setAiWidth] = useState(() => {
-    const saved = Number(localStorage.getItem('cerebro_ai_width'));
+    const saved = Number(localStorage.getItem('prism_ai_width'));
     return Number.isFinite(saved) && saved > 0 ? saved : 320;
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem('cerebro_sidebar_collapsed') === 'true'
+    () => localStorage.getItem('prism_sidebar_collapsed') === 'true'
   );
 
   // Custom dark context menu position (null = hidden). The default
@@ -217,10 +217,10 @@ export default function App() {
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem('cerebro_sidebar_collapsed', String(next));
+      localStorage.setItem('prism_sidebar_collapsed', String(next));
       // A manual toggle overrides the "Start with sidebar collapsed" setting
       // (and persists across restarts) until that setting is changed again.
-      localStorage.setItem('cerebro_sidebar_toggled', '1');
+      localStorage.setItem('prism_sidebar_toggled', '1');
       return next;
     });
   };
@@ -258,11 +258,11 @@ export default function App() {
 
   const saveSidebarWidth = (w: number) => {
     setSidebarWidth(w);
-    localStorage.setItem('cerebro_sidebar_width', String(w));
+    localStorage.setItem('prism_sidebar_width', String(w));
   };
   const saveAiWidth = (w: number) => {
     setAiWidth(w);
-    localStorage.setItem('cerebro_ai_width', String(w));
+    localStorage.setItem('prism_ai_width', String(w));
   };
 
   const { addLog, updateProgress } = useIngestion();
@@ -439,7 +439,7 @@ export default function App() {
     };
   }, []);
 
-  // 1. Load settings on startup. Rust (~/.cerebro/settings.json) is the source
+  // 1. Load settings on startup. Rust (~/.prism/settings.json) is the source
   // of truth; on first run it returns null and we migrate whatever legacy
   // localStorage settings exist, then persist them to Rust. Startup-only
   // appearance settings (startup view, AI panel, collapsed sidebar) are applied
@@ -487,10 +487,10 @@ export default function App() {
       // wins then. (The old `=== null` gate made the setting stop working the
       // moment the sidebar was ever toggled.) When it applies, sync the
       // persisted key too so the pre-settings first paint matches.
-      if (localStorage.getItem('cerebro_sidebar_toggled') !== '1') {
+      if (localStorage.getItem('prism_sidebar_toggled') !== '1') {
         setSidebarCollapsed(merged.appearance.sidebarCollapsedOnStart);
         localStorage.setItem(
-          'cerebro_sidebar_collapsed',
+          'prism_sidebar_collapsed',
           String(merged.appearance.sidebarCollapsedOnStart)
         );
       }
@@ -527,7 +527,7 @@ export default function App() {
       const sorted = [...files].sort((a, b) => a.title.localeCompare(b.title));
       
       // Apply custom order if it exists, otherwise alphabetical
-      const savedOrderRaw = localStorage.getItem(`cerebro_order_${path}`);
+      const savedOrderRaw = localStorage.getItem(`prism_order_${path}`);
       let finalNotes: NoteFile[] = sorted;
       if (savedOrderRaw) {
         try {
@@ -550,7 +550,7 @@ export default function App() {
       appLogger.info(`Vault indexed: ${sorted.length} notes (${path})`);
 
       // Startup sync: if a note's H1 doesn't match its filename (e.g. it was
-      // renamed outside Cerebro), rewrite the H1 to match. Runs once per vault
+      // renamed outside Prism), rewrite the H1 to match. Runs once per vault
       // (gated by the System setting `syncH1OnStartup`). Contents are read one
       // file at a time (they aren't bundled anymore).
       if (settings.system.syncH1OnStartup && h1SyncRanRef.current !== path) {
@@ -665,7 +665,7 @@ export default function App() {
     };
   }, [activeNote?.path, activeNote?.content]);
 
-  // 3. Save Settings Handler — persists to Rust (~/.cerebro/settings.json) as
+  // 3. Save Settings Handler — persists to Rust (~/.prism/settings.json) as
   // the source of truth, keeping localStorage as a lightweight cache.
   const handleSaveSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
@@ -685,7 +685,7 @@ export default function App() {
     if (
       newSettings.appearance.sidebarCollapsedOnStart !== settings.appearance.sidebarCollapsedOnStart
     ) {
-      localStorage.removeItem('cerebro_sidebar_toggled');
+      localStorage.removeItem('prism_sidebar_toggled');
     }
   };
 
@@ -968,7 +968,7 @@ export default function App() {
       await fetchNotes();
       // Keep the note's position in the persisted custom order (the path
       // changed, so swap the old path for the new one).
-      const orderKey = `cerebro_order_${settings.vaultPath}`;
+      const orderKey = `prism_order_${settings.vaultPath}`;
       const orderRaw = localStorage.getItem(orderKey);
       if (orderRaw) {
         try {
@@ -1004,7 +1004,7 @@ export default function App() {
 
     setNotes(newNotes);
     // Persist order
-    localStorage.setItem(`cerebro_order_${settings.vaultPath}`, JSON.stringify(newNotes.map(n => n.path)));
+    localStorage.setItem(`prism_order_${settings.vaultPath}`, JSON.stringify(newNotes.map(n => n.path)));
   };
 
   // Plain note selection (sidebar/new/delete): never a block jump, so clear

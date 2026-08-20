@@ -169,7 +169,7 @@ fn get_embedding_engine(
 
     let conn = db::init_db(app_handle)?;
     let home = app_handle.path().home_dir().map_err(|e| e.to_string())?;
-    let cache_dir = home.join(".cerebro").join("models");
+    let cache_dir = home.join(".prism").join("models");
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
 
     // Runtime-tunable embedding parameters (similarity threshold, threads,
@@ -1111,7 +1111,7 @@ fn append_ingestion_log(app: tauri::AppHandle, level: String, message: String) -
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let log_dir = home.join(".cerebro");
+    let log_dir = home.join(".prism");
     fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
 
     let log_path = log_dir.join("ingestion.log");
@@ -1159,11 +1159,11 @@ fn civil_from_epoch(epoch_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
 }
 
 /// Appends an app action/error log line. Logs are written to a folder named
-/// `appLogs` (next to the existing `.cerebro` data), organized by date:
+/// `appLogs` (next to the existing `.prism` data), organized by date:
 ///
 /// ```text
-/// ~/.cerebro/appLogs/2026-08-14/actions.log   <- app actions (info level)
-/// ~/.cerebro/appLogs/2026-08-14/errors.log    <- app errors
+/// ~/.prism/appLogs/2026-08-14/actions.log   <- app actions (info level)
+/// ~/.prism/appLogs/2026-08-14/errors.log    <- app errors
 /// ```
 ///
 /// Each line carries a full timestamp: `[YYYY-MM-DD HH:MM:SS] [LEVEL] message`.
@@ -1173,7 +1173,7 @@ fn append_app_log(app: tauri::AppHandle, level: String, message: String) -> Resu
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let log_root = home.join(".cerebro").join("appLogs");
+    let log_root = home.join(".prism").join("appLogs");
 
     let epoch_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1276,7 +1276,7 @@ async fn get_all_reconstructed_versions(
 // --- Runtime config bridge --------------------------------------------------
 
 /// Returns the persisted runtime config, or `None` on first run (no
-/// `~/.cerebro/settings.json` yet) so the frontend can migrate legacy
+/// `~/.prism/settings.json` yet) so the frontend can migrate legacy
 /// localStorage settings before saving.
 #[tauri::command]
 fn get_runtime_config(app: tauri::AppHandle) -> Option<config::RuntimeConfig> {

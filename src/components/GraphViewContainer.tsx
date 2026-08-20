@@ -3,7 +3,7 @@ import { GraphView } from './GraphView';
 import { GraphView3D } from './GraphView3D';
 import { GraphNode, GraphLink, NoteFile } from '../types';
 
-const GRAPH_MODE_KEY = 'cerebro_graph_mode';
+const GRAPH_MODE_KEY = 'prism_graph_mode';
 
 interface GraphViewContainerProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
@@ -25,7 +25,7 @@ interface GraphViewContainerProps {
 
 /**
  * Hosts the knowledge graph pane and its 2D/3D mode switcher. The choice is
- * persisted (cerebro_graph_mode) so the graph reopens in the same mode. The
+ * persisted (prism_graph_mode) so the graph reopens in the same mode. The
  * mode state lives here so the segmented control can be injected into either
  * graph component's toolbar header (toolbarExtra) while the graph bodies stay
  * self-contained.

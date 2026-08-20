@@ -7,7 +7,7 @@ pub mod history;
 
 use crate::linker::LinkMention;
 
-pub const DB_FILENAME: &str = "cerebro_vault.db";
+pub const DB_FILENAME: &str = "prism_vault.db";
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct BacklinkInfo {
@@ -138,7 +138,7 @@ pub fn db_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join(DB_FILENAME))
 }
 
-/// Initializes (or connects to) `cerebro_vault.db` in the app data directory.
+/// Initializes (or connects to) `prism_vault.db` in the app data directory.
 pub fn init_db(app_handle: &AppHandle) -> Result<Connection, String> {
     let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;

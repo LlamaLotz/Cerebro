@@ -3,7 +3,7 @@ import { CheckCircle2, Circle, XCircle, Check, ArrowRight, FileText } from 'luci
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { linkerService, LinkMention } from '../services/linkerService';
 
-const REVIEW_STORAGE_KEY = 'cerebro_review_state';
+const REVIEW_STORAGE_KEY = 'prism_review_state';
 
 interface ReviewState {
   filePath: string;

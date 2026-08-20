@@ -6,7 +6,7 @@ downloads/
 *.m4a
 
 # Extracted Markdown output folders
-cerebro_output/
+prism_output/
 
 # Python cache & Environment files
 __pycache__/

@@ -37,7 +37,7 @@ def auto_heal_environment():
         missing_torch = True
             
     if missing_standard or missing_torch:
-        print(f"\n[Cerebro Self-Healing] Environment needs repair.")
+        print(f"\n[Prism Self-Healing] Environment needs repair.")
         try:
             # Upgrade pip first
             subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -55,10 +55,10 @@ def auto_heal_environment():
                     "torch", "torchvision", "torchaudio"
                 ])
                 
-            print("[Cerebro Self-Healing] Environment repaired! Restarting script...\n")
+            print("[Prism Self-Healing] Environment repaired! Restarting script...\n")
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
-            print(f"[Cerebro Self-Healing ERROR] Failed to auto-install: {e}")
+            print(f"[Prism Self-Healing ERROR] Failed to auto-install: {e}")
             print("Please install these packages manually.\n")
 
 auto_heal_environment()
@@ -105,7 +105,7 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 # ==========================================
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-OUTPUT_DIR = SCRIPT_DIR / "cerebro_output"
+OUTPUT_DIR = SCRIPT_DIR / "prism_output"
 DOWNLOADS_DIR = SCRIPT_DIR / "downloads"
 LOGS_DIR = SCRIPT_DIR / "logs"
 
@@ -137,14 +137,14 @@ class TeeStream:
 def setup_logging():
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file = LOGS_DIR / f"cerebro_{timestamp}.log"
+    log_file = LOGS_DIR / f"prism_{timestamp}.log"
     
     # Redirect stdout and stderr so ALL prints, logs, and errors are captured
     sys.stdout = TeeStream(sys.__stdout__, log_file)
     sys.stderr = TeeStream(sys.__stderr__, log_file)
     
     print(f"==================================================")
-    print(f"CEREBRO INGESTION PIPELINE LOG")
+    print(f"PRISM INGESTION PIPELINE LOG")
     print(f"Date/Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log Destination: {log_file.resolve()}")
     print(f"==================================================\n")
@@ -159,7 +159,7 @@ def setup_logging():
         ]
     )
     
-    return logging.getLogger("Cerebro")
+    return logging.getLogger("Prism")
 
 WHISPER_MODEL = None
 CONVERTER_NO_OCR = None
@@ -263,7 +263,7 @@ def safe_write_file(file_path: Path, content: str, encoding: str = "utf-8"):
     """Writes content to a local temp file first, then moves it to the final destination to avoid network share permission issues."""
     try:
         temp_dir = Path(os.environ.get("TEMP", "/tmp"))
-        temp_file = temp_dir / f"cerebro_{int(time.time())}_{file_path.name}"
+        temp_file = temp_dir / f"prism_{int(time.time())}_{file_path.name}"
         
         with open(temp_file, "w", encoding=encoding) as f:
             f.write(content)
@@ -849,7 +849,7 @@ def open_file_picker() -> list[str]:
     root.attributes("-topmost", True)
 
     files = filedialog.askopenfilenames(
-        title="Cerebro - Select Local File(s)",
+        title="Prism - Select Local File(s)",
         filetypes=[
             ("All Supported Files", "*.pdf *.docx *.pptx *.xlsx *.mp3 *.wav *.m4a *.mp4 *.mov *.png *.jpg *.jpeg *.html"),
             ("PDF Documents", "*.pdf"),
@@ -867,12 +867,12 @@ def open_file_picker() -> list[str]:
 # 5. MAIN PIPELINE ROUTER
 # ==========================================
 
-def run_cerebro():
+def run_prism():
     global logger
     logger = setup_logging()
     
-    # Parse Command Line Arguments first (For automation / Cerebro App button integration)
-    parser = argparse.ArgumentParser(description="Cerebro Master Extractor Pipeline")
+    # Parse Command Line Arguments first (For automation / Prism App button integration)
+    parser = argparse.ArgumentParser(description="Prism Master Extractor Pipeline")
     parser.add_argument("--vault", type=str, help="Outputs clean final notes directly to this folder")
     parser.add_argument("--files", type=str, nargs="+", help="Automated batch files processing list")
     parser.add_argument("--urls", type=str, nargs="+", help="Automated batch URLs processing list")
@@ -886,7 +886,7 @@ def run_cerebro():
     raw_service_folder = OUTPUT_DIR / "raw_service_files"
 
     if args.vault:
-        # Override clean notes destination directly to Cerebro note vault
+        # Override clean notes destination directly to Prism note vault
         main_extractions_folder = Path(args.vault).resolve()
         logger.info(f"Note vault specified! Redirecting final clean notes to: {main_extractions_folder}")
 
@@ -927,7 +927,7 @@ def run_cerebro():
     else:
         # Standard Interactive Terminal Menu Mode
         logger.info("\n" + "="*50)
-        logger.info("CEREBRO UNIFIED INGESTION SYSTEM")
+        logger.info("PRISM UNIFIED INGESTION SYSTEM")
         logger.info("="*50)
         logger.info("OCR Mode Settings: [A] Adaptive (Default) | [O] Force OCR ON | [N] Force OCR OFF")
         ocr_mode = input("Select OCR Mode [A, O, or N]: ").strip().upper()
@@ -1008,4 +1008,4 @@ if __name__ == "__main__":
     # Required for macOS and Windows subprocess stability within PyPdfium chunk pools
     multiprocessing.set_start_method("spawn", force=True)
     multiprocessing.freeze_support()
-    run_cerebro()
+    run_prism()

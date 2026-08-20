@@ -45,7 +45,7 @@ export const IngestionLogPanel: React.FC = () => {
 
   // Floating-window behavior: the log window floats freely. Both the
   // collapsed badge and the expanded window share one position (persisted).
-  const POS_KEY = 'cerebro_log_position';
+  const POS_KEY = 'prism_log_position';
   const loadPos = (): { x: number; y: number } | null => {
     try {
       const saved = localStorage.getItem(POS_KEY);

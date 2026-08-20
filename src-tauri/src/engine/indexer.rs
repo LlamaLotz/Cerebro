@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn empty_folders_are_collected() {
         // Temp vault with a nested folder that contains no markdown.
-        let dir = std::env::temp_dir().join(format!("cerebro_idx_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("prism_idx_test_{}", std::process::id()));
         let root = dir.join("vault");
         std::fs::create_dir_all(root.join("Projects/Empty")).unwrap();
         std::fs::create_dir_all(root.join("Projects/Book")).unwrap();

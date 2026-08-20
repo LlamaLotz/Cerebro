@@ -1,7 +1,7 @@
 //! Runtime configuration bridge.
 //!
 //! The full `AppSettings` model (vault, AI, appearance, editor, linking,
-//! system) is owned by Rust and persisted as JSON at `~/.cerebro/settings.json`
+//! system) is owned by Rust and persisted as JSON at `~/.prism/settings.json`
 //! — the single source of truth. The frontend loads it over IPC on startup
 //! (migrating legacy localStorage settings on first run) and saves it back
 //! whenever the user hits Save in the Settings page.
@@ -155,7 +155,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             vault_path: String::new(),
-            ingestion_script: "python \"/Users/Shiver/Documents/Cerebro/Extractor Final/master_extractor.py\" --vault {vault_path}".to_string(),
+            ingestion_script: "python \"/Users/Shiver/Documents/Prism/Extractor Final/master_extractor.py\" --vault {vault_path}".to_string(),
             omni_route: OmniRouteConfig::default(),
             appearance: AppearanceConfig::default(),
             editor: EditorConfig::default(),
@@ -165,11 +165,11 @@ impl Default for RuntimeConfig {
     }
 }
 
-/// `~/.cerebro/settings.json` — same data directory as the SQLite index and
+/// `~/.prism/settings.json` — same data directory as the SQLite index and
 /// log files.
 pub fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    Ok(home.join(".cerebro").join("settings.json"))
+    Ok(home.join(".prism").join("settings.json"))
 }
 
 /// Loads the persisted config. Returns `None` when no file exists yet (first

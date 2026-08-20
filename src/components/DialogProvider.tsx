@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { X, AlertCircle, AlertTriangle, Type } from 'lucide-react';
 
-// Cerebro's own dialog system — replaces the native window.alert / confirm /
+// Prism's own dialog system — replaces the native window.alert / confirm /
 // prompt everywhere. The provider keeps a FIFO queue of requests (so dialogs
 // never clobber each other) and renders one themed modal at a time. The hook
 // mirrors the native signatures: `alert` resolves when dismissed, `confirm`

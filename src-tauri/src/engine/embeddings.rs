@@ -434,7 +434,7 @@ pub struct EmbeddingEngine {
 }
 
 impl EmbeddingEngine {
-    /// Loads the bge-base-en-v1.5 model (downloaded to `~/.cerebro/models` on
+    /// Loads the bge-base-en-v1.5 model (downloaded to `~/.prism/models` on
     /// first run, fully offline afterwards) and rebuilds the HNSW index from
     /// SQLite. Runtime-tunable parameters (similarity threshold, embedding
     /// threads/batch) are read from the persisted runtime config.
@@ -1184,7 +1184,7 @@ mod tests {
     #[test]
     fn is_short_note_flags_ultra_short_notes() {
         let db = crate::db::Database::open(":memory:").unwrap();
-        let dir = std::env::temp_dir().join(format!("cerebro-test-short-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("prism-test-short-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let short_path = dir.join("short.md");
         let long_path = dir.join("long.md");

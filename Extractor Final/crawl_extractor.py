@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
 
-async def extract_webpage_to_markdown(url: str, output_dir: str = "cerebro_output"):
+async def extract_webpage_to_markdown(url: str, output_dir: str = "prism_output"):
     """
     Renders a live dynamic webpage using Crawl4AI and extracts clean Markdown.
     """
@@ -27,7 +27,7 @@ async def extract_webpage_to_markdown(url: str, output_dir: str = "cerebro_outpu
         video_or_page_title = result.metadata.get("title", "webpage_content")
         markdown_text = result.markdown
 
-        # Save extracted Markdown to Cerebro output directory
+        # Save extracted Markdown to Prism output directory
         out_file = Path(output_dir) / "extracted_web_content.md"
         with open(out_file, "w", encoding="utf-8") as f:
             f.write(f"# {video_or_page_title}\n\nURL: {url}\n\n---\n\n{markdown_text}")

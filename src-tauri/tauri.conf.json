@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "cerebro",
+  "productName": "Prism",
   "version": "1.0.0",
-  "identifier": "com.cerebro.app",
+  "identifier": "com.prism.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Cerebro",
+        "title": "Prism",
         "width": 800,
         "height": 600,
         "resizable": true,

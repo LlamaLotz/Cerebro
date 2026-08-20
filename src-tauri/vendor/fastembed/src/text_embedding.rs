@@ -31,7 +31,7 @@ pub struct InitOptions {
     pub max_length: usize,
     pub cache_dir: PathBuf,
     pub show_download_progress: bool,
-    /// Cerebro: ONNX intra-op thread pool cap. `None` falls back to the
+    /// Prism: ONNX intra-op thread pool cap. `None` falls back to the
     /// patched default of 2 (stock fastembed uses every logical CPU, which
     /// spiked cores to ~96% on every save). Runtime-configurable via the
     /// `linking.embeddingThreads` setting.
@@ -124,7 +124,7 @@ impl TextEmbedding {
             intra_op_threads,
         } = options;
 
-        // Cerebro patch: cap the ONNX intra-op thread pool. stock fastembed
+        // Prism patch: cap the ONNX intra-op thread pool. stock fastembed
         // uses ALL logical CPUs, so every inference pass (runs on every note
         // save) saturates every core — a 96% CPU spike across all cores. The
         // default cap (1) keeps saves responsive AND the background memory
@@ -157,7 +157,7 @@ impl TextEmbedding {
             .with_execution_providers(execution_providers)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(threads)?
-            // Cerebro patch: a single inter-op thread. ONNX spawns one extra
+            // Prism patch: a single inter-op thread. ONNX spawns one extra
             // thread per inter-op worker, and the model's graph here has no
             // parallel branches to exploit — one worker keeps the background
             // memory footprint (thread stacks + per-thread arenas) minimal.
@@ -180,7 +180,7 @@ impl TextEmbedding {
             max_length,
         } = options;
 
-        // Cerebro patch: cap the ONNX intra-op thread pool at 2 (see
+        // Prism patch: cap the ONNX intra-op thread pool at 2 (see
         // try_new above — stock fastembed uses every logical CPU).
         let threads = available_parallelism()?.get().min(2);
 
