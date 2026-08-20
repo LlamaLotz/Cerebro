@@ -134,7 +134,7 @@ impl Default for LinkingConfig {
             embed_debounce_ms: 4_000,
             backfill_on_vault_open: true,
             // fastembed intra-op thread cap (see vendor/fastembed patch).
-            embedding_threads: 2,
+            embedding_threads: 1,
             embedding_batch_size: crate::engine::embeddings::BACKFILL_BATCH_SIZE,
             persist_node_positions: true,
         }
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(back.appearance.background_pattern, "grid");
         assert_eq!(back.appearance.default_graph_mode, "3d");
         assert!((back.linking.similarity_threshold - 0.70).abs() < 1e-6);
-        assert_eq!(back.linking.embedding_threads, 2);
+        assert_eq!(back.linking.embedding_threads, 1);
         assert_eq!(back.system.version_retention_days, 0);
     }
 }

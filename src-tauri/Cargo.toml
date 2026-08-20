@@ -49,3 +49,12 @@ ort-sys = "=2.0.0-rc.4"
 [patch.crates-io]
 fastembed = { path = "vendor/fastembed" }
 
+[target.'cfg(windows)'.dependencies]
+# Direct use of the WebView2 COM bindings (same version wry/tauri use) so the
+# app can disable browser accelerator keys natively — JS preventDefault cannot
+# stop WebView2's own handling of Ctrl+P / Ctrl+R / F5 / F12 / etc.
+webview2-com = "0.38.2"
+# For Interface::cast (up-casting ICoreWebView2Settings -> Settings3, which
+# carries AreBrowserAcceleratorKeysEnabled).
+windows-core = "0.61.2"
+

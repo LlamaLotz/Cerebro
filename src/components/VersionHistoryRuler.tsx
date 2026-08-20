@@ -6,11 +6,9 @@ interface VersionHistoryRulerProps {
   noteTitle: string;
   /** Versions oldest → newest; versions[0] is the original base snapshot. */
   versions: ReconstructedVersion[];
-  selectedVersion: ReconstructedVersion | null;
   loading: boolean;
   error: string | null;
   restoring: boolean;
-  onScrub: (version: ReconstructedVersion) => void;
   onRestore: (version: ReconstructedVersion) => void;
   onClose: () => void;
 }
@@ -20,6 +18,19 @@ interface VersionHistoryRulerProps {
 const TICK_SLOT_WIDTH = 40;
 // Preview cap — a huge historical version shouldn't jank the scrub.
 const PREVIEW_MAX_CHARS = 50000;
+
+// The scrubbed-content preview is the heaviest subtree in the modal (up to
+// 50k chars of laid-out text). Memoized so a re-render that doesn't change the
+// content (e.g. the same version re-scrolled) skips rebuilding it entirely.
+const VersionPreview = React.memo(function VersionPreview({ content }: { content: string }) {
+  return (
+    <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-300">
+      {content.length > PREVIEW_MAX_CHARS
+        ? content.slice(0, PREVIEW_MAX_CHARS) + '\n… (preview truncated)'
+        : content}
+    </pre>
+  );
+});
 
 // SQLite CURRENT_TIMESTAMP stores UTC as "YYYY-MM-DD HH:MM:SS"; the space
 // form parses as local time in most engines, so normalize to ISO + Z (UTC).
@@ -70,16 +81,24 @@ const diffStats = (older: string, newer: string): { added: number; removed: numb
 export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
   noteTitle,
   versions,
-  selectedVersion,
   loading,
   error,
   restoring,
-  onScrub,
   onRestore,
   onClose,
 }) => {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const centeredRef = useRef(false);
+  // Selection lives here, not in the Editor: scrubbing used to call
+  // `setSelectedVersion` in the parent, which re-rendered the ENTIRE editor
+  // tree (CodeMirror, LinkHub, preview) on every scrub step — that was the
+  // scrollbar jank. The ruler is the only consumer, so it owns the state.
+  // The modal remounts per open, so this starts fresh (base version selected
+  // once versions load below).
+  const [selected, setSelected] = useState<ReconstructedVersion | null>(null);
+  // Latest selection mirrored for the rAF scrub callback (runs after render).
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   // Even-pixel card width: the ruler's `calc(50% - 20px)` padding and the
   // left-1/2 pointer both need an even container so 50% never lands on a
   // .5px fraction (which pushes the 1px stem/ticks onto a half-pixel grid and
@@ -108,12 +127,21 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
   // pointer-up doesn't re-center on a tick (standard drag-vs-click guard).
   const suppressClickRef = useRef(false);
 
-  const selectedIndex = useMemo(() => {
-    const selId = selectedVersion?.version_id ?? null;
+  const sel = selected ?? versions[0] ?? null;
+  // Once versions arrive, anchor the selection on the base snapshot (matches
+  // the old Editor-owned default of versions[0]).
+  const prevVersionLenRef = useRef(0);
+  if (selected === null && versions.length > 0 && prevVersionLenRef.current === 0) {
+    prevVersionLenRef.current = versions.length;
+    setSelected(versions[0]);
+  }
+
+  const selIdx = useMemo(() => {
+    const selId = sel?.version_id ?? null;
     if (selId === null) return versions.findIndex((v) => v.version_id === null);
     return versions.findIndex((v) => v.version_id === selId);
-  }, [versions, selectedVersion]);
-  const selIdx = Math.max(0, selectedIndex);
+  }, [versions, sel]);
+  const boundedSelIdx = Math.max(0, selIdx);
 
   // Snap the track so tick `index` sits dead-center under the pointer. With
   // the fixed slot width and `calc(50% - 20px)` edge padding, the exact
@@ -168,15 +196,36 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
   }, [versions]);
 
   // Scrub: the slot under the center pointer is exactly
-  // round(scrollLeft / TICK_SLOT_WIDTH) — report that version.
+  // round(scrollLeft / TICK_SLOT_WIDTH). Scroll events fire many times per
+  // frame (smooth scrolling, trackpads), so buffer the latest slot and report
+  // it at most once per animation frame — a scrub previously triggered a full
+  // modal re-render (diff + preview) for EVERY intermediate scroll event.
+  const scrubPendingRef = useRef<number | null>(null);
+  const scrubRafRef = useRef<number | null>(null);
   const handleTrackScroll = () => {
     const el = trackRef.current;
     if (!el || versions.length === 0) return;
     const activeIndex = Math.round(el.scrollLeft / TICK_SLOT_WIDTH);
     const bounded = Math.max(0, Math.min(versions.length - 1, activeIndex));
-    const v = versions[bounded];
-    if (v && v !== selectedVersion) onScrub(v);
+    scrubPendingRef.current = bounded;
+    if (scrubRafRef.current !== null) return;
+    scrubRafRef.current = requestAnimationFrame(() => {
+      scrubRafRef.current = null;
+      const idx = scrubPendingRef.current;
+      scrubPendingRef.current = null;
+      if (idx === null) return;
+      const v = versions[idx];
+      // Same-reference setState bails out in React; the ref keeps the guard
+      // correct even though the rAF fires after the render.
+      if (v && v !== selectedRef.current) setSelected(v);
+    });
   };
+  // Cancel any pending scrub on unmount (modal close mid-scrub).
+  useEffect(() => {
+    return () => {
+      if (scrubRafRef.current !== null) cancelAnimationFrame(scrubRafRef.current);
+    };
+  }, []);
 
   const centerOn = (idx: number) => {
     if (suppressClickRef.current) {
@@ -244,17 +293,20 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
   // Major ticks: the current selection, the base + newest versions, every 5th
   // version, and any version that starts a new day.
   const isMajor = (i: number) =>
-    i === selIdx ||
+    i === boundedSelIdx ||
     i === 0 ||
     i === versions.length - 1 ||
     i % 5 === 0 ||
     (i > 0 && !sameDay(versions[i - 1].created_at, versions[i].created_at));
 
-  const sel = selectedVersion ?? versions[0] ?? null;
   const isBase = !!sel && sel.version_id === null;
-  const diff = sel
-    ? diffStats(versions[selIdx - 1]?.content ?? '', sel.content)
-    : { added: 0, removed: 0 };
+  // The +N/-M badge splits two full version bodies into line sets — only
+  // recompute when the selection (or the version list) actually changes, not
+  // on every parent re-render.
+  const diff = useMemo(() => {
+    if (!sel) return { added: 0, removed: 0 };
+    return diffStats(versions[boundedSelIdx - 1]?.content ?? '', sel.content);
+  }, [sel, boundedSelIdx, versions]);
 
   return (
     <div ref={overlayRef} className="absolute inset-0 z-30 flex items-center justify-center px-6 pointer-events-none">
@@ -335,7 +387,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
                 className="no-scrollbar overflow-x-auto cursor-grab active:cursor-grabbing touch-pan-y outline-none h-14 flex items-end bg-zinc-900/60 border border-zinc-800/60 rounded-xl select-none"
               >
                 {versions.map((v, i) => {
-                  const selected = i === selIdx;
+                  const selected = i === boundedSelIdx;
                   const major = isMajor(i);
                   return (
                     <button
@@ -399,13 +451,7 @@ export const VersionHistoryRuler: React.FC<VersionHistoryRulerProps> = ({
 
             {/* Live scrubbed-content preview */}
             <div className="mt-3 max-h-44 overflow-y-auto rounded-lg bg-zinc-900/70 border border-zinc-800/60 px-3 py-2">
-              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-300">
-                {sel
-                  ? sel.content.length > PREVIEW_MAX_CHARS
-                    ? sel.content.slice(0, PREVIEW_MAX_CHARS) + '\n… (preview truncated)'
-                    : sel.content
-                  : ''}
-              </pre>
+              <VersionPreview content={sel ? sel.content : ''} />
             </div>
           </>
         )}

@@ -108,7 +108,7 @@ export interface AppSettings {
     similarityThreshold: number; // Rust MIN_SIMILARITY_SCORE (default 0.70)
     embedDebounceMs: number;
     backfillOnVaultOpen: boolean;
-    embeddingThreads: number; // fastembed intra-op cap (default 2)
+    embeddingThreads: number; // fastembed intra-op cap (default 1)
     embeddingBatchSize: number;
     persistNodePositions: boolean;
   };

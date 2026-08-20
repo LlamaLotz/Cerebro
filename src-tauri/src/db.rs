@@ -1198,6 +1198,33 @@ pub fn load_all_block_embeddings(
     Ok(entries)
 }
 
+/// Loads every (block_id, text, vector) row for a single note. Used to reuse
+/// embeddings for blocks whose content didn't change between saves, so a small
+/// edit to a large note doesn't re-embed (and rewrite) all of its blocks.
+pub fn load_block_embeddings_for_note(
+    conn: &Connection,
+    note_id: &str,
+) -> Result<Vec<(String, String, Vec<f32>)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT block_id, text, vector FROM block_embeddings WHERE note_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![note_id], |row| {
+            let block_id: String = row.get(0)?;
+            let text: String = row.get(1)?;
+            let blob: Vec<u8> = row.get(2)?;
+            Ok((block_id, text, blob))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        let (block_id, text, blob) = row.map_err(|e| e.to_string())?;
+        entries.push((block_id, text, blob_to_vector(&blob)?));
+    }
+    Ok(entries)
+}
+
 /// Fetches block texts for a set of (note_id, block_id) pairs. Missing pairs
 /// are simply absent from the returned map.
 pub fn get_block_texts(
@@ -1389,5 +1416,33 @@ mod tests {
 
         remove_denied_link(&db.conn, "/a.md", None, None, None).unwrap();
         assert!(get_denied_links(&db.conn, "/a.md").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_load_block_embeddings_for_note_round_trip() {
+        let db = Database::open(":memory:").unwrap();
+        for path in ["/a.md", "/b.md"] {
+            db.conn
+                .execute(
+                    "INSERT INTO notes (id, title, path, updated_at) VALUES (?1, ?2, ?3, 0)",
+                    params![path, path, path],
+                )
+                .unwrap();
+        }
+        let vec = vec![0.1f32, 0.2, 0.3];
+        save_block_embedding(&db.conn, "/a.md", "b1", "First block", &vec).unwrap();
+        save_block_embedding(&db.conn, "/a.md", "b2", "Second block", &vec).unwrap();
+        // Another note's rows must not leak into the per-note load.
+        save_block_embedding(&db.conn, "/b.md", "b1", "Other", &vec).unwrap();
+
+        let rows = load_block_embeddings_for_note(&db.conn, "/a.md").unwrap();
+        assert_eq!(rows.len(), 2);
+        let by_id: std::collections::HashMap<&str, (&str, &[f32])> = rows
+            .iter()
+            .map(|(id, text, v)| (id.as_str(), (text.as_str(), v.as_slice())))
+            .collect();
+        assert_eq!(by_id["b1"].0, "First block");
+        assert_eq!(by_id["b2"].0, "Second block");
+        assert_eq!(by_id["b1"].1, vec.as_slice());
     }
 }

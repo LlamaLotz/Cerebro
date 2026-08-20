@@ -83,8 +83,16 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   // id -> sphere mesh, so hover highlight / restore can mutate the right node
   // (labels are siblings in the node group and are never touched).
   const nodeMeshesRef = useRef<Map<string, THREE.Mesh>>(new Map());
-  // title -> label sprite (reused across node rebuilds via refresh()).
+  // title -> label sprite (reused across node rebuilds via refresh()). The
+  // cache is evicted below when a title leaves the graph, so its GPU textures
+  // stay bounded to the current graph instead of growing with every distinct
+  // title ever shown (on a big vault, unbounded 3x-DPR pill textures were the
+  // WebGL memory balloon).
   const labelCacheRef = useRef<Map<string, THREE.Sprite>>(new Map());
+  // Every node group created by nodeThreeObject, so unmount can dispose their
+  // GPU resources explicitly (three-forcegraph does NOT dispose custom node
+  // objects when nodes leave the graph — it just drops them for GC).
+  const nodeGroupsRef = useRef<Set<THREE.Group>>(new Set());
 
   const [autoRotate, setAutoRotate] = useState(autoRotateOnLoad);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
@@ -428,6 +436,26 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   // label floating above it. The sphere keeps `userData.baseScale` so the
   // hover highlight restores it exactly. Memoized: see the stable-graph-props
   // note on handleNodeHover.
+  // Explicitly frees every GPU resource inside a node group (sphere geometry,
+  // materials, label texture). Safe on unmount/eviction where the resources
+  // are being dropped from the caches; NOT called per data-change because the
+  // node groups share the cached geometry/materials with still-live nodes.
+  const disposeNodeGroup = (group: THREE.Group) => {
+    group.traverse((child) => {
+      if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
+      if ((child as THREE.Mesh).material) {
+        const mat = (child as THREE.Mesh).material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat.dispose();
+      }
+      if ((child as THREE.Sprite).material) {
+        const spriteMat = (child as THREE.Sprite).material;
+        if (spriteMat.map) spriteMat.map.dispose();
+        spriteMat.dispose();
+      }
+    });
+  };
+
   const nodeThreeObject = useCallback((node: any) => {
     const mesh = new THREE.Mesh(sphereGeoRef.current!, materialFor(nodeColor(node)));
     const r = nodeRadius(node.linksCount ?? 0);
@@ -445,6 +473,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     const group = new THREE.Group();
     group.add(mesh);
     group.add(label);
+    nodeGroupsRef.current.add(group);
     return group;
   }, []);
 
@@ -689,6 +718,28 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
     };
   }, [backgroundPattern]);
 
+  // When the graph's node set changes, free GPU memory for nodes/labels that
+  // are no longer shown: prune the mesh map and evict label sprites (texture +
+  // material) for titles that left the graph. Sprites still in the graph are
+  // untouched, so this never interrupts live labels — it only bounds the cache.
+  useEffect(() => {
+    const titles = new Set<string>();
+    for (const n of graphData.nodes) {
+      const t = n.title ?? n.id;
+      if (t) titles.add(String(t));
+    }
+    const nodeIds = new Set(graphData.nodes.map((n) => n.id));
+    for (const id of nodeMeshesRef.current.keys()) {
+      if (!nodeIds.has(id)) nodeMeshesRef.current.delete(id);
+    }
+    for (const [title, sprite] of labelCacheRef.current) {
+      if (titles.has(title)) continue;
+      sprite.userData.texture?.dispose?.();
+      sprite.material?.dispose?.();
+      labelCacheRef.current.delete(title);
+    }
+  }, [graphData]);
+
   // Cleanup: dispose the shared GPU resources + tooltip poll on unmount.
   useEffect(() => {
     return () => {
@@ -697,6 +748,10 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
         const controls = graphRef.current.controls?.();
         if (controls) controls.dispose?.();
       }
+      // three-forcegraph never disposes custom node objects, so free every
+      // node group's resources explicitly here.
+      for (const group of nodeGroupsRef.current) disposeNodeGroup(group);
+      nodeGroupsRef.current.clear();
       sphereGeoRef.current?.dispose();
       for (const m of matCacheRef.current.values()) m.dispose();
       hoverMatRef.current?.dispose();
@@ -705,6 +760,7 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
         sprite.material?.dispose?.();
       }
       nodeMeshesRef.current.clear();
+      labelCacheRef.current.clear();
     };
   }, []);
 

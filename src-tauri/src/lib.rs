@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::{Manager, Window, Emitter};
 use rusqlite::params;
+#[cfg(windows)]
+use windows_core::Interface;
 
 mod config;
 mod db;
@@ -148,8 +150,7 @@ fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
     } else {
         Err(format!(
             "Embedding model cache is incomplete (missing {} in {}). \
-             Close the app, then run `cargo run --example check_model` from src-tauri \
-             to repair the cache.",
+             Close and reopen the app to re-download the model.",
             missing.join(", "),
             snapshot_dir.display()
         ))
@@ -622,12 +623,20 @@ fn select_folder() -> Option<String> {
 /// Streams the vault through a bounded worker pool and returns lightweight
 /// note metadata (no contents) so the sidebar renders without an IPC flood.
 /// The full knowledge graph is rebuilt in SQLite as a side effect.
+///
+/// Runs on a blocking thread (async command) — the scan walks and reads every
+/// markdown file in the vault, so keeping it on the main thread froze the UI
+/// (and spiked a core) for the whole duration on large vaults.
 #[tauri::command]
-fn index_vault(
+async fn index_vault(
     app_handle: tauri::AppHandle,
     vault_path: String,
 ) -> Result<engine::indexer::IndexedVault, String> {
-    engine::indexer::index_vault(Path::new(&vault_path), app_handle)
+    tauri::async_runtime::spawn_blocking(move || {
+        engine::indexer::index_vault(Path::new(&vault_path), app_handle)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Fetches the incoming backlinks (with source line ranges) for the currently
@@ -687,14 +696,27 @@ fn write_file(
         let targets = db::extract_applied_links(&content);
         let _ = db::update_links_flat(&conn, &file_path, &targets);
 
-        if let Ok(dictionary) = db::get_vault_dictionary(&conn) {
-            let linker = cached_linker(&state, dictionary);
-            let mentions = linker.find_mentions(&content, Some(&file_path));
-            let _ = db::update_backlinks(&conn, &file_path, &mentions, &content);
+        // Oversized notes skip the per-save mention/backlink rescan. Mirrors
+        // the frontend's LARGE_NOTE_CHARS gate, which already disables LinkHub
+        // scans at this size — scanning a multi-hundred-KB note against the
+        // whole vault dictionary (and rewriting backlink rows) on every
+        // autosave is pure CPU + write churn. The full vault index on open
+        // still rebuilds their backlinks.
+        if content.len() <= LARGE_NOTE_CHARS {
+            if let Ok(dictionary) = db::get_vault_dictionary(&conn) {
+                let linker = cached_linker(&state, dictionary);
+                let mentions = linker.find_mentions(&content, Some(&file_path));
+                let _ = db::update_backlinks(&conn, &file_path, &mentions, &content);
+            }
         }
     }
     Ok(())
 }
+
+/// Notes above this size skip the per-save mention/backlink rescan in
+/// `write_file` (mirrors the frontend's `LARGE_NOTE_CHARS`, which already
+/// disables LinkHub scans for oversized notes).
+const LARGE_NOTE_CHARS: usize = 200_000;
 
 #[tauri::command]
 fn read_file(file_path: String) -> Result<String, String> {
@@ -1192,41 +1214,63 @@ fn format_note_content(content: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn record_note_version(
+async fn record_note_version(
     app_handle: tauri::AppHandle,
     note_path: String,
     content: String,
 ) -> Result<Option<i64>, String> {
-    let conn = db::init_db(&app_handle)?;
-    db::history::record_note_version(&conn, &note_path, &content)
+    // Version recording reconstructs the latest content (applying every delta)
+    // and runs a Myers diff — on a large formatted note that's a real CPU
+    // spike, so it must not run on the main thread (it froze the UI on the
+    // Format button).
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::init_db(&app_handle)?;
+        db::history::record_note_version(&conn, &note_path, &content)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn reconstruct_note_version(
+async fn reconstruct_note_version(
     app_handle: tauri::AppHandle,
     note_path: String,
     target_delta_id: Option<i64>,
 ) -> Result<String, String> {
-    let conn = db::init_db(&app_handle)?;
-    db::history::reconstruct_note_version(&conn, &note_path, target_delta_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::init_db(&app_handle)?;
+        db::history::reconstruct_note_version(&conn, &note_path, target_delta_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn get_note_history(
+async fn get_note_history(
     app_handle: tauri::AppHandle,
     note_path: String,
 ) -> Result<Option<db::history::NoteVersionHistory>, String> {
-    let conn = db::init_db(&app_handle)?;
-    db::history::get_note_history(&conn, &note_path)
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::init_db(&app_handle)?;
+        db::history::get_note_history(&conn, &note_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn get_all_reconstructed_versions(
+async fn get_all_reconstructed_versions(
     app_handle: tauri::AppHandle,
     note_path: String,
 ) -> Result<Vec<db::history::ReconstructedVersion>, String> {
-    let conn = db::init_db(&app_handle)?;
-    db::history::get_all_reconstructed_versions(&conn, &note_path)
+    // Reconstructing a long history replays every delta patch — move it off
+    // the main thread too.
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::init_db(&app_handle)?;
+        db::history::get_all_reconstructed_versions(&conn, &note_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // --- Runtime config bridge --------------------------------------------------
@@ -1276,6 +1320,32 @@ pub fn run() {
                 embed_lock: Mutex::new(()),
                 linker_cache: Mutex::new(None),
             });
+
+            // Disable WebView2's browser accelerator keys (Ctrl+P print, Ctrl+R /
+            // F5 reload, Ctrl+O open-file, Ctrl+F find, F12 / Ctrl+Shift+I
+            // devtools, tab/window management, zoom, back/forward navigation,
+            // ...). These are handled by the browser process BEFORE the page can
+            // preventDefault them, so the native setting is the only reliable way
+            // to kill them. With the setting off, the browser ignores the keys
+            // AND still delivers the key events to the page — the app's own
+            // shortcuts (Ctrl+S save, Ctrl+F find-in-note, editor keybindings)
+            // keep working.
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| unsafe {
+                    if let Ok(core) = webview.controller().CoreWebView2() {
+                        if let Ok(settings) = core.Settings() {
+                            // AreBrowserAcceleratorKeysEnabled lives on the
+                            // Settings3 interface — up-cast and disable.
+                            if let Ok(settings3) = settings
+                                .cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3>()
+                            {
+                                let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                            }
+                        }
+                    }
+                });
+            }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

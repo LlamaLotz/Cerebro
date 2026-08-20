@@ -127,9 +127,11 @@ impl TextEmbedding {
         // Cerebro patch: cap the ONNX intra-op thread pool. stock fastembed
         // uses ALL logical CPUs, so every inference pass (runs on every note
         // save) saturates every core — a 96% CPU spike across all cores. The
-        // default cap (2) keeps saves responsive; the model is small enough
-        // that wall-clock impact is minor. `intra_op_threads` overrides the
-        // cap at runtime via the linking.embeddingThreads setting.
+        // default cap (1) keeps saves responsive AND the background memory
+        // footprint minimal (one thread stack + one ORT arena instead of one
+        // per core); the model is small enough that wall-clock impact is
+        // minor. `intra_op_threads` overrides the cap at runtime via the
+        // linking.embeddingThreads setting.
         let threads = available_parallelism()?.get().min(intra_op_threads.unwrap_or(2));
 
         let model_repo = TextEmbedding::retrieve_model(
@@ -155,6 +157,11 @@ impl TextEmbedding {
             .with_execution_providers(execution_providers)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(threads)?
+            // Cerebro patch: a single inter-op thread. ONNX spawns one extra
+            // thread per inter-op worker, and the model's graph here has no
+            // parallel branches to exploit — one worker keeps the background
+            // memory footprint (thread stacks + per-thread arenas) minimal.
+            .with_inter_threads(1)?
             .commit_from_file(model_file_reference)?;
 
         let tokenizer = load_tokenizer_hf_hub(model_repo, max_length)?;
@@ -181,6 +188,7 @@ impl TextEmbedding {
             .with_execution_providers(execution_providers)?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(threads)?
+            .with_inter_threads(1)?
             .commit_from_memory(&model.onnx_file)?;
 
         let tokenizer = load_tokenizer(model.tokenizer_files, max_length)?;

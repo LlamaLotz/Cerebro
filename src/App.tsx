@@ -128,7 +128,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     similarityThreshold: 0.7,
     embedDebounceMs: 4000,
     backfillOnVaultOpen: true,
-    embeddingThreads: 2,
+    embeddingThreads: 1,
     embeddingBatchSize: 16,
     persistNodePositions: true,
   },
@@ -218,6 +218,9 @@ export default function App() {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem('cerebro_sidebar_collapsed', String(next));
+      // A manual toggle overrides the "Start with sidebar collapsed" setting
+      // (and persists across restarts) until that setting is changed again.
+      localStorage.setItem('cerebro_sidebar_toggled', '1');
       return next;
     });
   };
@@ -390,6 +393,45 @@ export default function App() {
     };
   }, []);
 
+  // Belt-and-braces browser-shortcut blocker (the native WebView2 accelerator
+  // disable in Rust handles Windows; this also covers macOS WKWebView and any
+  // combo outside the native list). preventDefault suppresses the browser's
+  // action while leaving the event visible to the app's own keybindings, so
+  // Ctrl+S / Ctrl+F / editor shortcuts are untouched (they aren't listed).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      // Alt+←/→ : browser back/forward navigation.
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (key === 'arrowleft' || key === 'arrowright')) {
+        e.preventDefault();
+        return;
+      }
+      // Bare function keys: F5 reload, F3 find-next, F12 devtools.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (key === 'f5' || key === 'f3' || key === 'f12')) {
+        e.preventDefault();
+        return;
+      }
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (!mod) return;
+      const shift = e.shiftKey;
+      // Ctrl(+Shift) combos that are browser-only in this app:
+      //   p=print, r=reload, o=open-file, u=view-source, n/t/w=window/tab,
+      //   h=history, d=bookmark, g=find-next, e=search, j=downloads,
+      //   tab=tab-cycle, 1-9=tab-switch, +/-/=/0=zoom,
+      //   shift+i/c=devtools inspect/console, shift+delete=clear-data.
+      if (
+        ['p', 'r', 'o', 'u', 'n', 't', 'w', 'h', 'd', 'g', 'e', 'j', 'tab'].includes(key) ||
+        (shift && (key === 'i' || key === 'c' || key === 'delete')) ||
+        ['+', '=', '-', '0'].includes(key) ||
+        /^[1-9]$/.test(key)
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     return () => {
       if (graphDebounceRef.current) clearTimeout(graphDebounceRef.current);
@@ -440,8 +482,17 @@ export default function App() {
       // Apply startup-only appearance settings (these only affect launch state).
       setLayout(merged.appearance.startupView);
       setShowAICoPilot(merged.appearance.aiPanelOpenOnStart);
-      if (localStorage.getItem('cerebro_sidebar_collapsed') === null) {
+      // "Start with sidebar collapsed" applies on launch UNLESS the user has
+      // manually toggled the sidebar at some point — their last manual choice
+      // wins then. (The old `=== null` gate made the setting stop working the
+      // moment the sidebar was ever toggled.) When it applies, sync the
+      // persisted key too so the pre-settings first paint matches.
+      if (localStorage.getItem('cerebro_sidebar_toggled') !== '1') {
         setSidebarCollapsed(merged.appearance.sidebarCollapsedOnStart);
+        localStorage.setItem(
+          'cerebro_sidebar_collapsed',
+          String(merged.appearance.sidebarCollapsedOnStart)
+        );
       }
 
       // Enforce the version-history retention policy once at startup.
@@ -628,6 +679,13 @@ export default function App() {
       tauriAPI.purgeExpiredHistory(newSettings.system.versionRetentionDays).catch((e) => {
         console.error('Failed to purge expired history:', e);
       });
+    }
+    // Changing "Start with sidebar collapsed" re-arms it for the next launch:
+    // clear the manual-toggle override so the new preference applies on start.
+    if (
+      newSettings.appearance.sidebarCollapsedOnStart !== settings.appearance.sidebarCollapsedOnStart
+    ) {
+      localStorage.removeItem('cerebro_sidebar_toggled');
     }
   };
 

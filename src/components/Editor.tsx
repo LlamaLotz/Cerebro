@@ -403,7 +403,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [historyVersions, setHistoryVersions] = useState<ReconstructedVersion[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [selectedVersion, setSelectedVersion] = useState<ReconstructedVersion | null>(null);
   const [restoringVersion, setRestoringVersion] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   // Extraction metadata from the sidecar JSON the extractor writes into the
@@ -1576,7 +1575,6 @@ export const Editor: React.FC<EditorProps> = ({
     try {
       const versions = await tauriAPI.getNoteVersionHistory(note.path);
       setHistoryVersions(versions);
-      setSelectedVersion(versions[0] ?? null);
     } catch (e) {
       console.error('Failed to load version history:', e);
       appLogger.error(`Failed to load version history for ${note.path}`, e);
@@ -1591,17 +1589,10 @@ export const Editor: React.FC<EditorProps> = ({
   // only when opening.
   const openHistory = () => {
     setShowHistory((open) => {
-      if (!open) {
-        setSelectedVersion(null);
-        loadHistory();
-      }
+      if (!open) loadHistory();
       return !open;
     });
   };
-
-  // Scrub the ruler: the ruler reports the version now under its center
-  // pointer and the preview below it updates live.
-  const handleScrubVersion = (v: ReconstructedVersion) => setSelectedVersion(v);
 
   // Restore an old version: write the reconstructed content over the file and
   // swap it into the editor. The restore itself is also recorded as a new
@@ -1787,7 +1778,11 @@ const sidecarPath = (notePath: string): string => {
     const sharedExtensions = [
       lineNumbers(),
       highlightActiveLine(),
-      history(),
+      // Cap the undo history depth: CodeMirror keeps every undo group's doc
+      // snapshots in memory, and on large notes 100+ groups of multi-MB docs
+      // accumulate fast. 50 groups + the default 500ms grouping is plenty of
+      // undo runway while bounding the retained memory.
+      history({ minDepth: 50, newGroupDelay: 500 }),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       oneDark,
       cmTheme,
@@ -2652,11 +2647,9 @@ const sidecarPath = (notePath: string): string => {
         <VersionHistoryRuler
           noteTitle={note.title}
           versions={historyVersions}
-          selectedVersion={selectedVersion}
           loading={historyLoading}
           error={historyError}
           restoring={restoringVersion}
-          onScrub={handleScrubVersion}
           onRestore={(v) => restoreVersion(v)}
           onClose={() => setShowHistory(false)}
         />

@@ -14,8 +14,9 @@ use rusqlite::{params, Connection};
 
 use crate::db::{
     clear_all_block_embeddings, clear_all_embeddings, clear_block_embeddings,
-    clear_note_embedding, load_all_block_embeddings, load_all_embeddings, save_block_embedding,
-    save_note_embedding, BlockEmbedding, SemanticMatch,
+    clear_note_embedding, load_all_block_embeddings, load_all_embeddings,
+    load_block_embeddings_for_note, save_block_embedding, save_note_embedding, BlockEmbedding,
+    SemanticMatch,
 };
 
 /// Graph construction parameters (accuracy/speed trade-off).
@@ -424,6 +425,12 @@ pub struct EmbeddingEngine {
     min_similarity: Mutex<f32>,
     /// Runtime-tunable backfill batch size (was BACKFILL_BATCH_SIZE).
     backfill_batch_size: Mutex<usize>,
+    /// note_id -> FNV-1a 64 hash of the content that was last embedded. A save
+    /// whose content is byte-identical to the last embedded version (reverted
+    /// edits, repeated autosaves, format round-trips) skips ONNX inference AND
+    /// the SQLite row rewrite entirely — the expensive per-save cost on large
+    /// notes is otherwise paid again for zero semantic change.
+    last_embedded_hash: Mutex<HashMap<String, u64>>,
 }
 
 impl EmbeddingEngine {
@@ -504,6 +511,7 @@ impl EmbeddingEngine {
             blocks: Mutex::new(blocks),
             min_similarity: Mutex::new(min_similarity),
             backfill_batch_size: Mutex::new(config.linking.embedding_batch_size.max(1)),
+            last_embedded_hash: Mutex::new(HashMap::new()),
         })
     }
 
@@ -570,19 +578,35 @@ impl EmbeddingEngine {
             // related notes.
             crate::db::clear_note_embedding(conn, note_id)?;
             self.index.lock().unwrap().remove(note_id);
+            self.last_embedded_hash.lock().unwrap().remove(note_id);
             println!("[embeddings] purged embedding for empty note: {note_id}");
             return Ok(());
         }
         if is_oversized(content) {
+            self.last_embedded_hash.lock().unwrap().remove(note_id);
             println!(
                 "[embeddings] skipping note-level embedding for oversized note ({} bytes): {note_id}",
                 content.len()
             );
             return Ok(());
         }
+
+        // Memo: this exact content was already embedded → nothing to do (no
+        // ONNX inference, no SQLite write). Covers reverted edits and repeated
+        // saves of identical text, which otherwise re-ran inference and
+        // rewrote the row each time.
+        let hash = fnv1a64(content.as_bytes());
+        {
+            let memo = self.last_embedded_hash.lock().unwrap();
+            if memo.get(note_id) == Some(&hash) {
+                return Ok(());
+            }
+        }
+
         let vector = self.generate_embedding(content)?;
         save_note_embedding(conn, note_id, &vector)?;
         self.index.lock().unwrap().upsert(note_id, vector);
+        self.last_embedded_hash.lock().unwrap().insert(note_id.to_string(), hash);
         Ok(())
     }
 
@@ -714,9 +738,11 @@ impl EmbeddingEngine {
                 .map_err(|e| e.to_string())?;
 
             let mut index = self.index.lock().unwrap();
-            for ((id, _), vector) in chunk.iter().zip(embeddings) {
+            let mut memo = self.last_embedded_hash.lock().unwrap();
+            for ((id, content), vector) in chunk.iter().zip(embeddings) {
                 save_note_embedding(conn, id, &vector)?;
                 index.upsert(id, vector);
+                memo.insert(id.clone(), fnv1a64(content.as_bytes()));
                 count += 1;
             }
         }
@@ -730,6 +756,18 @@ fn fnv1a32(bytes: &[u8]) -> u32 {
     for &b in bytes {
         hash ^= b as u32;
         hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+/// FNV-1a 64-bit content hash — the memo key for the last-embedded content of
+/// a note. Collisions are astronomically unlikely for this use; the worst case
+/// is a skipped re-embed (stale suggestions until the next content change).
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
 }
@@ -863,34 +901,93 @@ impl EmbeddingEngine {
             // forever, since oversized notes are never re-embedded.
             let _ = clear_block_embeddings(conn, note_id);
             self.blocks.lock().unwrap().retain(|b| b.note_id != note_id);
+            self.last_embedded_hash.lock().unwrap().remove(note_id);
             println!(
                 "[embeddings] purged block embeddings for oversized note ({} bytes): {note_id}",
                 content.len()
             );
             return Ok(());
         }
+
+        // Memo: identical content was already block-embedded → skip inference
+        // AND the row rewrite entirely.
+        let hash = fnv1a64(content.as_bytes());
+        {
+            let memo = self.last_embedded_hash.lock().unwrap();
+            if memo.get(note_id) == Some(&hash) {
+                return Ok(());
+            }
+        }
+
         let blocks = split_into_blocks(content);
-        // Purge existing rows *before* the empty check: a note whose blocks
-        // were all removed would otherwise keep ghost block suggestions
-        // forever (nothing is ever re-inserted for an empty block list).
-        clear_block_embeddings(conn, note_id)?;
-        self.blocks.lock().unwrap().retain(|b| b.note_id != note_id);
-        if blocks.is_empty() {
-            return Ok(());
+
+        // Reuse vectors for blocks whose content is unchanged since the last
+        // save. Block ids are derived from the block text (or its `^anchor`),
+        // so an identical (block_id, text) pair is guaranteed to produce the
+        // same vector. Only genuinely new/changed blocks run inference — a
+        // small edit to a large note no longer re-embeds (and rewrites) all
+        // of its blocks, which was the main CPU/temp spike on save.
+        let existing: HashMap<(String, String), Vec<f32>> =
+            load_block_embeddings_for_note(conn, note_id)?
+                .into_iter()
+                .map(|(block_id, text, vector)| ((block_id, text), vector))
+                .collect();
+
+        let mut reused: Vec<((String, String), Vec<f32>)> = Vec::new();
+        let mut to_embed: Vec<(String, String)> = Vec::new();
+        for (block_id, text) in &blocks {
+            match existing.get(&(block_id.clone(), text.clone())) {
+                Some(vector) => reused.push(((block_id.clone(), text.clone()), vector.clone())),
+                None => to_embed.push((block_id.clone(), text.clone())),
+            }
         }
 
-        let texts: Vec<String> = blocks.iter().map(|(_, t)| t.clone()).collect();
-        let vectors = self.embed_serial(texts)?;
+        let new_vectors = if to_embed.is_empty() {
+            Vec::new()
+        } else {
+            let texts: Vec<String> = to_embed.iter().map(|(_, t)| t.clone()).collect();
+            self.embed_serial(texts)?
+        };
 
-        let mut index = self.blocks.lock().unwrap();
-        for ((block_id, text), vector) in blocks.iter().zip(vectors) {
-            save_block_embedding(conn, note_id, block_id, text, &vector)?;
-            index.push(BlockEntry {
-                note_id: note_id.to_string(),
-                block_id: block_id.clone(),
-                vector,
-            });
+        // Purge stale rows and write reused + freshly embedded blocks in a
+        // single transaction — one commit instead of hundreds of per-row
+        // autocommits (each a WAL frame + checkpoint candidate) per save.
+        {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            tx.execute(
+                "DELETE FROM block_embeddings WHERE note_id = ?1",
+                params![note_id],
+            )
+            .map_err(|e| e.to_string())?;
+            for ((block_id, text), vector) in &reused {
+                save_block_embedding(&tx, note_id, block_id, text, vector)?;
+            }
+            for ((block_id, text), vector) in to_embed.iter().zip(&new_vectors) {
+                save_block_embedding(&tx, note_id, block_id, text, vector)?;
+            }
+            tx.commit().map_err(|e| e.to_string())?;
         }
+
+        {
+            let mut index = self.blocks.lock().unwrap();
+            index.retain(|b| b.note_id != note_id);
+            for ((block_id, _), vector) in &reused {
+                index.push(BlockEntry {
+                    note_id: note_id.to_string(),
+                    block_id: block_id.clone(),
+                    vector: vector.clone(),
+                });
+            }
+            for ((block_id, _), vector) in to_embed.iter().zip(&new_vectors) {
+                index.push(BlockEntry {
+                    note_id: note_id.to_string(),
+                    block_id: block_id.clone(),
+                    vector: vector.clone(),
+                });
+            }
+        }
+
+        self.last_embedded_hash.lock().unwrap().insert(note_id.to_string(), hash);
         Ok(())
     }
 
@@ -1003,6 +1100,7 @@ impl EmbeddingEngine {
                 // as suggestions (oversized notes are never re-embedded).
                 let _ = clear_block_embeddings(conn, note_id);
                 self.blocks.lock().unwrap().retain(|b| &b.note_id != note_id);
+                self.last_embedded_hash.lock().unwrap().remove(note_id);
                 println!(
                     "[embeddings] purged block embeddings for oversized note ({} bytes): {note_id}",
                     content.len()
@@ -1016,10 +1114,12 @@ impl EmbeddingEngine {
             clear_block_embeddings(conn, note_id)?;
             if blocks.is_empty() {
                 self.blocks.lock().unwrap().retain(|b| &b.note_id != note_id);
+                self.last_embedded_hash.lock().unwrap().remove(note_id);
                 continue;
             }
             let texts: Vec<String> = blocks.iter().map(|(_, t)| t.clone()).collect();
             let vectors = self.embed_serial(texts)?;
+            self.last_embedded_hash.lock().unwrap().insert(note_id.clone(), fnv1a64(content.as_bytes()));
 
             for ((block_id, text), vector) in blocks.iter().zip(vectors) {
                 save_block_embedding(conn, note_id, block_id, text, &vector)?;

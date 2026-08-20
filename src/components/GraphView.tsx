@@ -187,6 +187,22 @@ export const GraphView: React.FC<GraphViewProps> = ({
     const EXTENT = 100000;
     const defs = svg.append('defs');
 
+    // Drop shadow filter for node grounding: casts a dark shadow onto the
+    // background grid plane so nodes read as resting on it.
+    const shadowFilter = defs.append('filter')
+      .attr('id', 'node-drop-shadow')
+      .attr('x', '-20%')
+      .attr('y', '-20%')
+      .attr('width', '140%')
+      .attr('height', '140%');
+
+    shadowFilter.append('feDropShadow')
+      .attr('dx', '0')
+      .attr('dy', '4')
+      .attr('stdDeviation', '4')
+      .attr('flood-color', '#000000')
+      .attr('flood-opacity', '0.85');
+
     const gridPattern = defs
       .append('pattern')
       .attr('id', 'graph-bg-grid-pattern')
@@ -242,15 +258,18 @@ export const GraphView: React.FC<GraphViewProps> = ({
 
     // 3. Force Physics Simulation: Strong repulsion + Collision to prevent clumping
     const simulation = d3.forceSimulation<any>(d3Nodes)
+      .velocityDecay(0.72) // Heavy ground friction: stops nodes from sliding/skating
+      .alphaDecay(0.05)    // Fast settle
       .force('link', d3.forceLink<any, any>(d3Links)
         .id((d: any) => normalizeKey(d.id || d.title || d.path))
-        .distance(110)
+        .distance(120)
+        .strength(0.08)   // Low spring tension: prevents distant nodes from skating
       )
-      .force('charge', d3.forceManyBody().strength(-450))
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.8))
-      .force('collision', d3.forceCollide().radius((d: any) => Math.max(22, (d.linksCount || 1) * 2 + 16)))
-      .force('x', d3.forceX(width / 2).strength(0.04))
-      .force('y', d3.forceY(height / 2).strength(0.04));
+      .force('charge', d3.forceManyBody().strength(-180)) // Gentle repulsion
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.4))
+      .force('collision', d3.forceCollide().radius((d: any) => Math.max(22, (d.linksCount || 1) * 1.5 + 16)))
+      .force('x', d3.forceX(width / 2).strength(0.02))
+      .force('y', d3.forceY(height / 2).strength(0.02));
 
     simulationRef.current = simulation;
 
@@ -298,12 +317,19 @@ export const GraphView: React.FC<GraphViewProps> = ({
           })
           .on('end', (event: any, d: any) => {
             if (!event.active) simulation.alphaTarget(0);
+            // UN-PIN node on release so it stays dynamic and never gets stuck
+            // in place like a static background object — with fx/fy left set,
+            // the node freezes at the drop point while the rest of the graph
+            // settles around it.
+            d.fx = null;
+            d.fy = null;
             savePositions(d3Nodes);
           })
       );
 
     // Node Circle
     nodeElements.append('circle')
+      .attr('filter', 'url(#node-drop-shadow)') // Anchors node onto background plane
       .attr('r', (d: any) => Math.max(7, Math.min(20, (d.linksCount || 1) * 1.8 + 6)))
       .attr('fill', (d: any) => {
         const isCurrent = activeNote && d.title && activeNote.title.toLowerCase() === d.title.toLowerCase();

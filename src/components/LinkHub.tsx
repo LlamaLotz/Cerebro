@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Sparkles, Zap, Link2, RefreshCw, Info, Check, X, ExternalLink, EyeOff, Eye, ChevronDown, Anchor, Unlink, Tag } from 'lucide-react';
+import { Sparkles, Zap, Link2, RefreshCw, Info, Check, X, ExternalLink, EyeOff, Eye, ChevronDown, Anchor, Unlink } from 'lucide-react';
 import { NoteFile, WikiLink } from '../types';
 import { LinkMention, BacklinkInfo, DeniedLink } from '../services/linkerService';
 import { SemanticMatch, BlockMatch } from '../services/semantic';
@@ -309,23 +309,6 @@ export const LinkHub: React.FC<LinkHubProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="hidden lg:flex items-center gap-1.5">
-            {(Object.keys(TAG_STYLES) as LinkKind[]).map((kind) => (
-              <span
-                key={kind}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[8px] font-bold uppercase tracking-wide ${TAG_STYLES[kind].cls}`}
-              >
-                {TAG_STYLES[kind].icon}
-                {TAG_STYLES[kind].label}
-              </span>
-            ))}
-            {/* @Tag mentions in the note: teal, distinct from the yellow
-                local keywords above. */}
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[8px] font-bold uppercase tracking-wide bg-teal-500/10 text-teal-400 border-teal-500/30">
-              <Tag className="w-2.5 h-2.5" />
-              Tag
-            </span>
-          </span>
           {isLoading && <span className="text-[10px] text-slate-500 italic">Scanning…</span>}
           <button
             onClick={onCollapse}
@@ -464,7 +447,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
         <div className="mb-4 pb-3 border-b border-slate-900/60">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <Tag className="w-3 h-3 text-amber-400" /> Keywords
+              <Zap className="w-3 h-3 text-amber-400" /> Keywords
             </span>
             <span className="text-[9px] text-slate-600 italic">hidden from the note</span>
           </div>
