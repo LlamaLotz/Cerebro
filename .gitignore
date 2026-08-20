@@ -1,2 +1,5 @@
 node_modules
 .freebuff
+
+# Vite dev cache (pre-bundled deps) — auto-regenerated on `vite dev`
+.vite/
