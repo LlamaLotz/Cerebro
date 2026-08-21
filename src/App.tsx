@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { GraphViewContainer } from './components/GraphViewContainer';
 import { TopicsView } from './components/TopicsView';
 import { AISidebar } from './components/AISidebar';
-import { SettingsPage } from './components/SettingsPage';
+import { SettingsPage, type SectionId } from './components/SettingsPage';
 import { IngestModal } from './components/IngestModal';
 import { IngestionLogPanel } from './components/IngestionLogPanel';
 import { useIngestion } from './services/ingestionStore';
@@ -15,6 +15,7 @@ import { linkerService } from './services/linkerService';
 import { backfillEmbeddings, generateAndStoreEmbedding, generateAndStoreBlockEmbeddings } from './services/semantic';
 import { appLogger } from './services/appLogger';
 import { formatNote, noteTitleMatches } from './utils/formatter';
+import { applyAccentColor } from './utils/accentColor';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
@@ -101,6 +102,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   vaultPath: '',
   ingestionScript: 'python "/Users/Shiver/Documents/Prism/Extractor Final/master_extractor.py" --vault {vault_path}',
   omniRoute: {
+    provider: '', // none — user picks a provider in Settings
     apiKey: '',
     baseUrl: 'https://api.omniroute.ai/v1',
     model: 'gpt-4o',
@@ -119,6 +121,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     labelQuality: 'high',
     autoRotateOnLoad: false,
     autoRotateSpeed: 0.67,
+    accentColor: '#FEB05D',
+    hoverGlowColor: '#FEB05D',
+    graphNodeColor: '#FEB05D',
+    appIcon: '',
+    sidebarStatusText: '',
   },
   editor: {
     autosaveDebounceMs: 800,
@@ -179,6 +186,21 @@ export default function App() {
   const [isIngesting, setIsIngesting] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
+  // Which Settings section to land on when the window opens (the AI Co-Pilot
+  // "Configure Now" link jumps straight to the AI page).
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SectionId>('general');
+
+  const openSettings = (section: SectionId = 'general') => {
+    setSettingsInitialSection(section);
+    setIsSettingsOpen(true);
+  };
+
+  // Re-theme the brand ramp + hover glow whenever the saved colors change.
+  useEffect(() => {
+    applyAccentColor(settings.appearance.accentColor, {
+      hoverGlow: settings.appearance.hoverGlowColor,
+    });
+  }, [settings.appearance.accentColor, settings.appearance.hoverGlowColor]);
 
   // Startup splash: visible until settings load AND the vault's first index
   // completes (or is skipped because no vault is connected), then fades out.
@@ -1046,6 +1068,12 @@ export default function App() {
     appLogger.info(`Note opened: ${note.title}`);
   };
 
+  // Double-clicking a note in the sidebar opens it in the full editor panel.
+  const handleOpenNote = (note: NoteFile) => {
+    handleSelectNote(note);
+    setLayout('editor');
+  };
+
   // 10. Wiki link traversal & automatic connection note creation
   const handleWikiLinkClick = async (targetTitle: string, blockId?: string, line?: number) => {
     // Trim a trailing .md extension so [label](Note.md) resolves like [[Note]]
@@ -1118,7 +1146,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen bg-base text-slate-100 font-sans overflow-hidden select-none">
       {/* Custom frameless-window titlebar (drag region + window controls) */}
-      <TitleBar />
+      <TitleBar appIcon={settings.appearance.appIcon} />
 
       <div className="flex flex-1 overflow-hidden">
       {/* Sidebar navigation (collapsible) */}
@@ -1153,8 +1181,11 @@ export default function App() {
             onRefresh={() => fetchNotes()}
             onRunIngest={() => setIsIngestModalOpen(true)}
             isIngesting={isIngesting}
-            onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenSettings={() => openSettings()}
             onCollapse={toggleSidebar}
+            onOpenNote={handleOpenNote}
+            statusText={settings.appearance.sidebarStatusText}
+            appIcon={settings.appearance.appIcon}
           />
           <ResizeHandle
             direction="horizontal"
@@ -1255,6 +1286,7 @@ export default function App() {
           {/* Connected Force Graph Network Pane (2D/3D toggle inside) */}
           {(layout === 'graph' || layout === 'split') && (
             <GraphViewContainer
+              key={settings.appearance.graphNodeColor}
               graphData={graphData}
               activeNote={graphActiveNote}
               onSelectNoteByTitle={handleWikiLinkClick}
@@ -1264,6 +1296,7 @@ export default function App() {
               autoRotateOnLoad={settings.appearance.autoRotateOnLoad}
               autoRotateSpeed={settings.appearance.autoRotateSpeed}
               labelQuality={settings.appearance.labelQuality}
+              nodeColor={settings.appearance.graphNodeColor}
             />
           )}
 
@@ -1282,7 +1315,7 @@ export default function App() {
                 note={activeNote}
                 allNotes={notes}
                 config={settings.omniRoute}
-                onOpenSettings={() => setIsSettingsOpen(true)}
+                onOpenSettings={() => openSettings('ai')}
                 onInsertText={handleInsertText}
               />
             </div>
@@ -1298,6 +1331,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={handleSaveSettings}
+        initialSection={settingsInitialSection}
       />
 
       {/* Ingest Modal overlay */}
@@ -1355,7 +1389,11 @@ export default function App() {
 
       {/* Startup splash overlay (fades out once boot completes) */}
       {splashVisible && (
-        <SplashScreen isLoading={isBooting} onFinish={() => setSplashVisible(false)} />
+        <SplashScreen
+          isLoading={isBooting}
+          onFinish={() => setSplashVisible(false)}
+          logo={settings.appearance.appIcon || undefined}
+        />
       )}
     </div>
   );

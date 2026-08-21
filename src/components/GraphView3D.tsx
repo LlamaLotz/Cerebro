@@ -3,6 +3,7 @@ import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { GraphNode, GraphLink, NoteFile } from '../types';
 import { Network, Home, Orbit } from 'lucide-react';
+import { mixHex, hexToRgba } from '../utils/accentColor';
 
 interface GraphView3DProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
@@ -30,11 +31,20 @@ interface TooltipState {
 
 // Prism palette (matches the 2D graph's legend): active note primary amber,
 // existing notes lighter amber, uncreated wiki-link targets slate-grey.
-const COLOR_ACTIVE = '#FEB05D'; // brand-500
-const COLOR_EXISTS = '#ffc069'; // brand-400
+// Mutable so the Appearance "Graph node color" setting re-themes the nodes.
+let COLOR_ACTIVE = '#FEB05D'; // brand-500
+let COLOR_EXISTS = '#ffc069'; // brand-400
 const COLOR_MISSING = '#3c3b39'; // slate-grey
-const COLOR_HOVER = '#ffcb85'; // brand-300
+let COLOR_HOVER = '#ffcb85'; // brand-300
 const LINK_COLOR = 'rgba(245, 242, 242, 0.08)'; // off-white, faint
+
+/** Re-derives the 3D node palette from a user-picked base color. */
+export function setGraphPalette(nodeColor: string): void {
+  const base = /^#[0-9a-f]{6}$/i.test(nodeColor) ? nodeColor.toLowerCase() : '#FEB05D';
+  COLOR_ACTIVE = base;
+  COLOR_EXISTS = mixHex(base, '#ffffff', 0.22); // lighter "exists" shade
+  COLOR_HOVER = mixHex(base, '#ffffff', 0.35); // light hover shade
+}
 
 // Node spheres are scaled by backlink/connection count so hubs read at a
 // glance: 1.4..9 world units.
@@ -564,7 +574,9 @@ export const GraphView3D: React.FC<GraphView3DProps> = ({
   // library new function references — a changed nodeThreeObject/linkColor
   // reference makes three-forcegraph rebuild every node/link object.
   const linkColor = useCallback(() => LINK_COLOR, []);
-  const particleColor = useCallback(() => 'rgba(254, 176, 93, 0.8)', []);
+  // The small spheres travelling along connections follow the node color
+  // (COLOR_ACTIVE is re-derived by setGraphPalette, so these tint together).
+  const particleColor = useCallback(() => hexToRgba(COLOR_ACTIVE, 0.8), []);
   const handleNodeClick = useCallback(
     (node: any) => onSelectNoteByTitleRef.current(node.title ?? node.id),
     []

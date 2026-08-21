@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, Copy, X } from 'lucide-react';
+import { getAppIcon } from '../services/appIcon';
 
 /**
  * Custom frameless-window titlebar. The OS decorations are disabled
@@ -11,7 +12,7 @@ import { Minus, Square, Copy, X } from 'lucide-react';
  * is a sibling (NOT inside `data-tauri-drag-region`) so clicks always land on
  * the buttons instead of initiating a window drag.
  */
-export const TitleBar: React.FC = () => {
+export const TitleBar: React.FC<{ appIcon?: string }> = ({ appIcon = '' }) => {
   const [maximized, setMaximized] = useState(false);
   // Memoize so the effect below doesn't re-subscribe `onResized` on every render.
   const appWindow = useMemo(() => getCurrentWindow(), []);
@@ -56,7 +57,11 @@ export const TitleBar: React.FC = () => {
         data-tauri-drag-region
         className="flex-1 h-full flex items-center gap-2 pl-3 cursor-default"
       >
-        <img src="/logo.png" alt="Prism" className="w-4 h-4 shrink-0 pointer-events-none" />
+        <img
+          src={getAppIcon(appIcon)}
+          alt="Prism"
+          className="w-4 h-4 shrink-0 pointer-events-none object-contain"
+        />
         <span className="text-[11px] font-display font-semibold tracking-[0.2em] text-offwhite pointer-events-none">
           PRISM
         </span>

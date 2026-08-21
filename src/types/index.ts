@@ -48,6 +48,8 @@ export interface GraphLink {
 }
 
 export interface OmniRouteConfig {
+  /** Provider id from the API provider registry (see apiProviders.ts). */
+  provider: string;
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -97,6 +99,16 @@ export interface AppSettings {
     labelQuality: 'standard' | 'high';
     autoRotateOnLoad: boolean;
     autoRotateSpeed: number;
+    /** Brand accent color (hex) applied as the CSS --color-brand-* ramp. */
+    accentColor: string;
+    /** Color of the button/slider hover underglow (hex). */
+    hoverGlowColor: string;
+    /** Base color for knowledge-graph nodes (hex). */
+    graphNodeColor: string;
+    /** Custom app icon as a data URL (empty = default /logo.png). */
+    appIcon: string;
+    /** Status line beside the sidebar logo; supports {date} and {time} tokens. */
+    sidebarStatusText: string;
   };
   editor: {
     autosaveDebounceMs: number;

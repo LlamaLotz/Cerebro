@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { GraphView } from './GraphView';
-import { GraphView3D } from './GraphView3D';
+import React, { useEffect, useState } from 'react';
+import { GraphView, setGraphPalette as setPalette2D } from './GraphView';
+import { GraphView3D, setGraphPalette as setPalette3D } from './GraphView3D';
 import { GraphNode, GraphLink, NoteFile } from '../types';
 
 const GRAPH_MODE_KEY = 'prism_graph_mode';
@@ -21,6 +21,8 @@ interface GraphViewContainerProps {
   autoRotateSpeed: number;
   /** Appearance setting: 3D label billboard DPI ('high' = up to 3x, crisp). */
   labelQuality: 'standard' | 'high';
+  /** Appearance setting: base color for graph nodes (hex). */
+  nodeColor: string;
 }
 
 /**
@@ -40,7 +42,13 @@ export const GraphViewContainer: React.FC<GraphViewContainerProps> = ({
   autoRotateOnLoad = false,
   autoRotateSpeed = 0.67,
   labelQuality = 'high',
+  nodeColor = '#FEB05D',
 }) => {
+  // Re-theme both graph palettes whenever the node color setting changes.
+  useEffect(() => {
+    setPalette2D(nodeColor);
+    setPalette3D(nodeColor);
+  }, [nodeColor]);
   // Open in the configured default mode; a user who explicitly picked a mode
   // before (key stored) keeps their choice.
   const [graphMode, setGraphMode] = useState<'2d' | '3d'>(

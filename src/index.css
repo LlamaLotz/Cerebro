@@ -1,5 +1,39 @@
 @import "tailwindcss";
 
+/* Local font faces (bundled from src/assets/fonts) — variable fonts cover
+   the full weight range with a single file each. */
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/fonts/Inter-VariableFont.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fira Code';
+  src: url('./assets/fonts/FiraCode-VariableFont.ttf') format('truetype');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Instrument Serif';
+  src: url('./assets/fonts/InstrumentSerif-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Instrument Serif';
+  src: url('./assets/fonts/InstrumentSerif-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
 @theme {
   /* Neutral Charcoal Grey ramp — remaps Tailwind's blue-tinted slate-*
      scale to warm charcoal greys so every slate class in the app renders
@@ -50,6 +84,8 @@
   --color-brand-900: #6d4408;
   --color-brand-950: #3a2304;
   --color-brand-glow: rgba(254, 176, 93, 0.15);
+  --color-hover-glow: rgba(254, 176, 93, 0.35);
+  --color-hover-glow-active: rgba(245, 158, 11, 0.45);
 
   /* Muted Blue — tags & badges */
   --color-accent-secondary: #5A7ACD;
@@ -62,7 +98,7 @@
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-display: 'Instrument Sans', 'Inter', sans-serif;
+  --font-display: 'Inter', system-ui, sans-serif;
   --font-serif: 'Instrument Serif', Georgia, serif;
   --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, monospace;
 
@@ -95,14 +131,6 @@ pre {
   font-family: var(--font-mono);
 }
 
-/* Display & section headers use the display face (Instrument Sans) */
-h1,
-h2,
-h3,
-h4 {
-  font-family: var(--font-display);
-}
-
 /* Force strict 0px radius on standard UI components. Cards, buttons, inputs,
    modals, tabs and window chrome must be razor-sharp. */
 div,
@@ -128,6 +156,16 @@ article {
    classes like `border-transparent`, `hover:border-slate-800`, `border-0`
    still win — these are only defaults for unstyled controls). */
 @layer base {
+  /* Display & section headers use the display face (Inter) by default.
+     Kept inside @layer base so utility classes (e.g. `font-serif`, `font-sans`)
+     can override it on individual headings. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
+
   /* Crisp 1px neutral borders on interactive controls */
   button,
   input,
@@ -150,7 +188,9 @@ article {
     appearance: none;
     width: 14px;
     height: 14px;
-    margin-top: -5px; /* center the 14px thumb on the 4px track */
+    /* WebKit sizes the thumb content-box, so its outer height is 14 + 2px
+       border = 16px; -(16 - 4 track) / 2 centers it exactly on the track. */
+    margin-top: -6px;
     border-radius: 2px;
     background: var(--color-brand-500);
     border: 1px solid var(--color-brand-600);
@@ -169,24 +209,51 @@ article {
     background: var(--color-slate-800);
   }
 
-  /* Button hover glows — amber border highlight + soft gold glow across
-     the app. Layered so per-button hover utilities still take precedence. */
+  /* Button hover glows — border highlight + soft underglow across the app.
+     Colors come from --color-hover-glow (overridden at runtime by the
+     Appearance "hover glow" setting). Layered so per-button hover utilities
+     still take precedence. */
   button:not(:disabled):hover {
     border-color: var(--color-brand-500);
-    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+    box-shadow: 0 0 10px var(--color-hover-glow);
   }
   input[type='range']:hover::-webkit-slider-thumb {
     border-color: var(--color-brand-500);
-    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+    box-shadow: 0 0 10px var(--color-hover-glow);
   }
   input[type='range']:hover::-moz-range-thumb {
     border-color: var(--color-brand-500);
-    box-shadow: 0 0 10px rgba(254, 176, 93, 0.35);
+    box-shadow: 0 0 10px var(--color-hover-glow);
   }
   button:not(:disabled):active {
     border-color: var(--color-brand-600);
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
+    box-shadow: 0 0 6px var(--color-hover-glow-active);
   }
+}
+
+/* Hue slider in the custom accent picker: a crisp white-ring thumb so the
+   current hue is obvious against the rainbow track. */
+input[type='range'].hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  /* Outer height 16 + 4px border = 20px; -(20 - 4 track) / 2 = -8px. */
+  margin-top: -8px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.65);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+input[type='range'].hue-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.65);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  cursor: pointer;
 }
 
 /* Hide scrollbars on horizontal scrubber tracks (ruler, tick strips) while

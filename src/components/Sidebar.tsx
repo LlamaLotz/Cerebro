@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { NoteFile, tauriAPI } from '../types';
 import { useIngestion } from '../services/ingestionStore';
+import { getAppIcon } from '../services/appIcon';
 
 interface SidebarProps {
   notes: NoteFile[];
@@ -14,6 +15,12 @@ interface SidebarProps {
   folders: string[];
   activeNote: NoteFile | null;
   onSelectNote: (note: NoteFile) => void;
+  /** Double-click a note to open it in the full editor panel. */
+  onOpenNote: (note: NoteFile) => void;
+  /** Free-form status line beside the logo; {date}/{time} tokens supported. */
+  statusText?: string;
+  /** Custom app icon id from the rainbow logo registry (empty = default). */
+  appIcon?: string;
   onNewNote: () => void;
   onNewFolder: () => void;
   /** Delete a folder (and everything inside it). Receives the folder's
@@ -110,6 +117,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   folders: foldersProp,
   activeNote,
   onSelectNote,
+  onOpenNote,
+  statusText = '',
+  appIcon = '',
   onNewNote,
   onNewFolder,
   onDeleteFolder,
@@ -126,6 +136,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const { isMinimized, setMinimized, isHidden, setHidden, progress } = useIngestion();
+
+  // Live status line beside the logo ({date}/{time} tokens). Only ticks when
+  // the configured text actually uses the time token.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!statusText.includes('{time}')) return;
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, [statusText]);
+  const statusLine = useMemo(() => {
+    if (!statusText.trim()) return null;
+    return statusText
+      .replace('{date}', now.toLocaleDateString())
+      .replace('{time}', now.toLocaleTimeString());
+  }, [statusText, now]);
 
   // Collapsed folder set (relative paths), persisted so the tree reopens the
   // way it was left. Default: all folders expanded.
@@ -212,6 +237,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }`}
         style={{ paddingLeft: depth * 16 + 12 }}
         onClick={() => onSelectNote(note)}
+        onDoubleClick={() => onOpenNote(note)}
+        title="Double-click to open in the full editor"
       >
         <div className="flex items-center gap-2 truncate flex-1 pr-2">
           <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-brand-400' : 'text-slate-500'}`} />
@@ -314,10 +341,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">
-        <div className="flex items-center">
-          <img src="/logo.png" alt="Prism logo" className="w-[38px] h-[38px]" />
+        <div className="flex items-center gap-2.5 min-w-0">
+          <img
+            src={getAppIcon(appIcon)}
+            alt="Prism logo"
+            className="w-[38px] h-[38px] shrink-0 object-contain"
+          />
+          {statusLine && (
+            <p className="text-[10px] text-slate-500 leading-tight line-clamp-2">{statusLine}</p>
+          )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={onCollapse}
             className="text-slate-400 hover:text-slate-200 hover:bg-slate-900 p-1.5 rounded-lg transition-colors border border-transparent hover:border-slate-800"

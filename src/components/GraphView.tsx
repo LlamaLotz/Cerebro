@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { NoteFile, GraphNode, GraphLink } from '../types';
 import { Network, Home, RotateCw } from 'lucide-react';
+import { mixHex, hexToRgba } from '../utils/accentColor';
 
 // Path normalization: link endpoints come from raw [[wiki-link]] text and
 // note paths (Windows `\` separators, `.md` suffixes, mixed casing) while D3
@@ -18,16 +19,28 @@ const normalizeKey = (str: any): string => {
 
 // Prism palette (Neutral Charcoal + Warm Amber): active note primary amber,
 // existing notes lighter amber, uncreated wiki-link targets slate-grey.
-// Mirrors GraphView3D.
-const COLOR_ACTIVE = '#FEB05D'; // brand-500
-const COLOR_EXISTS = '#ffc069'; // brand-400
+// Mirrors GraphView3D. Mutable so the Appearance "Graph node color" setting
+// re-themes the nodes at runtime via setGraphPalette.
+let COLOR_ACTIVE = '#FEB05D'; // brand-500
+let COLOR_EXISTS = '#ffc069'; // brand-400
 const COLOR_MISSING = '#4a4947'; // slate-grey
-const COLOR_HOVER = '#f59e0b'; // brand-600 (hover/pressed)
+let COLOR_HOVER = '#f59e0b'; // brand-600 (hover/pressed)
 const STROKE_COLOR = '#F5F2F2'; // off-white
-const STROKE_EXISTS = '#f59e0b'; // brand-600
-const GRID_COLOR = 'rgba(254, 176, 93, 0.05)';
-const MESH_COLOR = 'rgba(254, 176, 93, 0.18)';
+let STROKE_EXISTS = '#f59e0b'; // brand-600
+let GRID_COLOR = 'rgba(254, 176, 93, 0.05)';
+let MESH_COLOR = 'rgba(254, 176, 93, 0.18)';
 const LINK_COLOR = 'rgba(150, 147, 143, 0.35)';
+
+/** Re-derives the node palette from a user-picked base color. */
+export function setGraphPalette(nodeColor: string): void {
+  const base = /^#[0-9a-f]{6}$/i.test(nodeColor) ? nodeColor.toLowerCase() : '#FEB05D';
+  COLOR_ACTIVE = base;
+  COLOR_EXISTS = mixHex(base, '#ffffff', 0.22); // lighter "exists" shade
+  COLOR_HOVER = mixHex(base, '#000000', 0.12); // darker hover shade
+  STROKE_EXISTS = mixHex(base, '#000000', 0.12);
+  GRID_COLOR = hexToRgba(base, 0.05);
+  MESH_COLOR = hexToRgba(base, 0.18);
+}
 
 interface GraphViewProps {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };

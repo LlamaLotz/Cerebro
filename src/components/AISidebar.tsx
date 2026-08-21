@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { NoteFile, OmniRouteConfig } from '../types';
-import { summarizeNote, suggestConnections, suggestMetadata, sendChatMessage } from '../services/omniRouteService';
+import { summarizeNote, suggestConnections, suggestMetadata, sendChatMessage } from '../services/apiService';
+import { buildChatSystemPrompt } from '../services/systemMessages';
 
 interface AISidebarProps {
   note: NoteFile | null;
@@ -60,14 +61,8 @@ export const AISidebar: React.FC<AISidebarProps> = ({
       const fullMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
         {
           role: 'system',
-          content: `You are Prism AI, a professional knowledge-base assistant integrated directly into the user's Obsidian-like markdown note-taking workspace.
-${
-  note
-    ? `You have access to the user's active note titled "${note.title}". Active note contents:\n"""\n${note.content ?? ''}\n"""`
-    : `The user currently has no note selected.`
-}
-Respond in beautifully formatted Markdown, using paragraphs, lists, bold text, or code sections as needed.`
-        }
+          content: buildChatSystemPrompt(note),
+        },
       ];
 
       // Add chat history
