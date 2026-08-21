@@ -826,7 +826,11 @@ fn create_folder(vault_path: String, relative_path: String) -> Result<String, St
 }
 
 #[tauri::command]
-fn delete_folder(vault_path: String, relative_path: String) -> Result<(), String> {
+fn delete_folder(
+    vault_path: String,
+    relative_path: String,
+    only_if_empty: Option<bool>,
+) -> Result<(), String> {
     let root = Path::new(&vault_path);
     let dir = root.join(&relative_path);
 
@@ -857,6 +861,19 @@ fn delete_folder(vault_path: String, relative_path: String) -> Result<(), String
         .unwrap_or(false)
     {
         return Err("Cannot delete the app-managed 'note metadata' folder".to_string());
+    }
+
+    // Optional best-effort cleanup: when `only_if_empty` is set, leave the
+    // folder alone unless it contains no entries (used by Undo Split so an
+    // emptied section folder is removed without risking user-added files).
+    if only_if_empty.unwrap_or(false) {
+        let is_empty = dir
+            .read_dir()
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(false);
+        if !is_empty {
+            return Ok(());
+        }
     }
 
     fs::remove_dir_all(&dir).map_err(|e| format!("Failed to delete folder: {e}"))?;

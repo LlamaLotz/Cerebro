@@ -410,6 +410,15 @@ export const Editor: React.FC<EditorProps> = ({
   // note body on purpose so it only ever surfaces in the Note Metadata modal.
   const [sidecarMeta, setSidecarMeta] = useState<{ source: string | null; extractionMethod: string | null } | null>(null);
   const [formatSnapshot, setFormatSnapshot] = useState<string | null>(null);
+  // Snapshot of the last split: the parent's pre-split content plus the
+  // absolute paths of the section files it created, so Undo Split can roll
+  // the whole operation back (restore content + delete the new notes).
+  const [splitSnapshot, setSplitSnapshot] = useState<{
+    parentContent: string;
+    createdPaths: string[];
+    /** Relative path of the subfolder the section notes were written into. */
+    sectionDir: string;
+  } | null>(null);
   // Split-in-progress flag (the section files are created one at a time).
   const [isSplitting, setIsSplitting] = useState(false);
   const [linkHubHeight, setLinkHubHeight] = useState(() => {
@@ -950,6 +959,7 @@ export const Editor: React.FC<EditorProps> = ({
     setRelatedMatches([]);
     setBlockMatches([]);
     setLinkError(null);
+    setSplitSnapshot(null);
     runScan(note.content ?? '', true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note?.path]);
@@ -1534,6 +1544,7 @@ export const Editor: React.FC<EditorProps> = ({
         ? note.relativePath.slice(0, note.relativePath.lastIndexOf('/'))
         : '';
       const sectionDir = folder ? `${folder}/${subfolder}` : subfolder;
+      const createdPaths: string[] = [];
       for (const s of plan.sections) {
         const rel = `${sectionDir}/${s.fileName}.md`;
         const res = await tauriAPI.createFile({
@@ -1541,11 +1552,13 @@ export const Editor: React.FC<EditorProps> = ({
           relativePath: rel,
           content: s.content,
         });
-        if (!res.success) throw new Error(res.error || `Failed to create ${rel}`);
+        if (!res.success || !res.fullPath) throw new Error(res.error || `Failed to create ${rel}`);
+        createdPaths.push(res.fullPath);
         appLogger.info(`Split: created ${rel}`);
       }
-      // Replace the parent with the index of links (undoable via Undo Format).
-      setFormatSnapshot(content);
+      // Replace the parent with the index of links. Snapshot the original
+      // content + created paths so Undo Split can fully roll this back.
+      setSplitSnapshot({ parentContent: content, createdPaths, sectionDir });
       updateContent(plan.parentContent);
       await onSaveContent(note.path, plan.parentContent);
       tauriAPI.recordNoteVersion(note.path, plan.parentContent).catch(() => {});
@@ -1564,6 +1577,37 @@ export const Editor: React.FC<EditorProps> = ({
     onSaveContent(note.path, formatSnapshot);
     tauriAPI.recordNoteVersion(note.path, formatSnapshot).catch(() => {});
     setFormatSnapshot(null);
+  };
+
+  // Undo the last split: delete the created section notes and restore the
+  // parent note's original content.
+  const handleUndoSplit = async () => {
+    if (!note || !splitSnapshot || isSplitting) return;
+    const snap = splitSnapshot;
+    setSplitSnapshot(null);
+    try {
+      for (const p of snap.createdPaths) {
+        const res = await tauriAPI.deleteFile(p);
+        if (!res.success) throw new Error(res.error || `Failed to delete ${p}`);
+      }
+      // Remove the now-empty section folder (best-effort, and only when empty
+      // so any notes the user added after splitting are never deleted).
+      if (snap.sectionDir) {
+        await tauriAPI.deleteFolder({
+          vaultPath,
+          relativePath: snap.sectionDir,
+          onlyIfEmpty: true,
+        });
+      }
+      updateContent(snap.parentContent);
+      await onSaveContent(note.path, snap.parentContent);
+      tauriAPI.recordNoteVersion(note.path, snap.parentContent).catch(() => {});
+      onVaultChanged?.();
+    } catch (e) {
+      console.error('Undo split failed:', e);
+      appLogger.error('Undo split failed', e);
+      setSplitSnapshot(snap);
+    }
   };
 
   // Time Machine: load the note's version timeline (base snapshot + every
@@ -2305,18 +2349,28 @@ const sidecarPath = (notePath: string): string => {
               <Redo2 className="w-3.5 h-3.5" />
             </button>
           </div>
-          <button
-            onClick={handleSplit}
-            disabled={h2Count < 2 || isSplitting}
-            title={
-              h2Count < 2
-                ? 'Split note into sections — needs at least 2 ## headings'
-                : 'Split this note into separate notes (one per ## section)'
-            }
-            className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-800 text-slate-400 hover:text-brand-400 hover:border-brand-500/40 transition-all disabled:opacity-40 disabled:hover:text-slate-400 disabled:hover:border-slate-800"
-          >
-            <Scissors className="w-3.5 h-3.5" /> {isSplitting ? 'Splitting…' : 'Split'}
-          </button>
+          <div className="flex bg-slate-950 border border-slate-800 rounded-lg p-1">
+            <button
+              onClick={handleSplit}
+              disabled={h2Count < 2 || isSplitting}
+              title={
+                h2Count < 2
+                  ? 'Split note into sections — needs at least 2 ## headings'
+                  : 'Split this note into separate notes (one per ## section)'
+              }
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-brand-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+            >
+              <Scissors className="w-3.5 h-3.5" /> {isSplitting ? 'Splitting…' : 'Split'}
+            </button>
+            <button
+              onClick={handleUndoSplit}
+              disabled={splitSnapshot === null || isSplitting}
+              title="Undo the last split: delete the created section notes and restore the original note"
+              className="flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-md text-slate-400 hover:text-brand-400 transition-all disabled:opacity-40 disabled:hover:text-slate-400"
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Undo
+            </button>
+          </div>
           <button
             onClick={insertBlockAnchor}
             title="Insert a block anchor (^id) on this paragraph and copy a [[Note#^id]] link"

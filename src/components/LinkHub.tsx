@@ -193,13 +193,26 @@ export const LinkHub: React.FC<LinkHubProps> = ({
   const visibleBacklinks = backlinks.filter(
     (b) => !denied.has(backlinkKey(b)) && knownPaths.has(b.source_path.toLowerCase())
   );
+
+  // A note that is both an applied (outbound) link and an incoming backlink is
+  // shown once — the backlink card gains the "Applied" pill + Unlink action and
+  // the standalone outbound card is skipped, so the same note never overlaps.
+  const outboundByTitle = new Map(
+    visibleOutbound.map((l) => [l.targetTitle.toLowerCase(), l])
+  );
+  const backlinkTitleSet = new Set(
+    visibleBacklinks.map((b) => b.source_title.toLowerCase())
+  );
+  const standaloneOutbound = visibleOutbound.filter(
+    (l) => !backlinkTitleSet.has(l.targetTitle.toLowerCase())
+  );
   const total =
     keywords.length +
     visibleMentions.length +
     visibleRelated.length +
     visibleBlocks.length +
     visibleBacklinks.length +
-    visibleOutbound.length;
+    standaloneOutbound.length;
 
   const handleRefresh = () => {
     onRefresh();
@@ -514,7 +527,7 @@ export const LinkHub: React.FC<LinkHubProps> = ({
           </div>
         ) : (
           <div className="space-y-2">
-            {visibleOutbound.map((l) => (
+            {standaloneOutbound.map((l) => (
               <div
                 key={outboundKey(l)}
                 className={CARD_CLS}
@@ -637,12 +650,15 @@ export const LinkHub: React.FC<LinkHubProps> = ({
               );
             })}
 
-            {visibleBacklinks.map((b) => (
+            {visibleBacklinks.map((b) => {
+              const mutual = outboundByTitle.get(b.source_title.toLowerCase());
+              return (
               <div
                 key={backlinkKey(b)}
                 className={CARD_CLS}
                 onClick={() => onWikiLinkClick(b.source_title, undefined, b.start_line)}
               >
+                {mutual && <TagPill kind="outbound" />}
                 <TagPill kind="backlink" />
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-semibold text-slate-200 truncate">{b.source_title}</div>
@@ -653,6 +669,18 @@ export const LinkHub: React.FC<LinkHubProps> = ({
                     {b.start_line > 0 && ` · line ${b.start_line}${b.end_line > b.start_line ? `–${b.end_line}` : ''}`}
                   </div>
                 </div>
+                {mutual && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUnlinkLink(mutual);
+                    }}
+                    title="Unlink: remove the [[wikilink]] syntax, keep the text"
+                    className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold rounded-md border transition-all bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-amber-500/10 hover:border-amber-500/40 hover:text-amber-400"
+                  >
+                    <Unlink className="w-3 h-3" /> Unlink
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -664,7 +692,8 @@ export const LinkHub: React.FC<LinkHubProps> = ({
                   <X className="w-3 h-3" /> Delete
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

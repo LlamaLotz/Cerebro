@@ -216,11 +216,12 @@ export const tauriAPI = {
       return { success: false, error: err.toString() };
     }
   },
-  deleteFolder: async (data: { vaultPath: string; relativePath: string }): Promise<{ success: boolean; error?: string }> => {
+  deleteFolder: async (data: { vaultPath: string; relativePath: string; onlyIfEmpty?: boolean }): Promise<{ success: boolean; error?: string }> => {
     try {
       await invoke('delete_folder', {
         vaultPath: data.vaultPath,
         relativePath: data.relativePath,
+        onlyIfEmpty: data.onlyIfEmpty ?? false,
       });
       return { success: true };
     } catch (err: any) {

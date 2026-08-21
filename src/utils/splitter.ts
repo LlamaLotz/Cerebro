@@ -58,14 +58,24 @@ function slugify(text: string): string {
  * heading's readable text (spaces, case, punctuation that's filename-safe)
  * instead of lowercasing it into a slug. The resulting file is named exactly
  * after the section heading, e.g. `## My Great Section` → `My Great Section.md`.
- * Strips Windows-forbidden characters, trailing dots/spaces, and caps length.
+ * Strips Windows-forbidden characters and trailing dots/spaces. Long
+ * headings are preserved in full, trimmed at a word boundary only past the
+ * 200-char filesystem safety net.
  */
 function headingFileName(title: string): string {
-  const cleaned = title
+  let cleaned = title
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
     .replace(/[. ]+$/g, '')
-    .trim()
-    .slice(0, 80);
+    .trim();
+  // 200 chars is a filesystem safety net only (255-char component limit);
+  // otherwise the full heading is preserved. Trim at a word boundary so the
+  // name is never cut mid-word.
+  if (cleaned.length > 200) {
+    cleaned = cleaned.slice(0, 200);
+    const lastSpace = cleaned.lastIndexOf(' ');
+    if (lastSpace > 0) cleaned = cleaned.slice(0, lastSpace);
+    cleaned = cleaned.replace(/[. ]+$/g, '').trim();
+  }
   return cleaned || slugify(title) || 'section';
 }
 
