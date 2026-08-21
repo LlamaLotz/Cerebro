@@ -123,9 +123,9 @@ const EMBEDDING_REQUIRED_FILES: [&str; 5] = [
 
 /// Verifies the local fastembed cache holds the full set of model files.
 /// A cache dir without `refs/main` (never downloaded) passes so fastembed can
-/// attempt the one-time download; a *started* download that left the snapshot
-/// incomplete fails fast with a clear message instead of re-attempting a
-/// broken fetch on every scan.
+/// attempt the one-time download. A *started* download that left the snapshot
+/// incomplete is cleared so the next load re-downloads the model cleanly,
+/// instead of failing (and staying broken) on every launch.
 fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
     let repo_dir = cache_dir.join(EMBEDDING_REPO_DIR);
     if !repo_dir.exists() {
@@ -146,15 +146,21 @@ fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
         .collect();
 
     if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Embedding model cache is incomplete (missing {} in {}). \
-             Close and reopen the app to re-download the model.",
-            missing.join(", "),
-            snapshot_dir.display()
-        ))
+        return Ok(());
     }
+
+    // Interrupted/partial download: remove the whole repo (including
+    // `refs/main`) so `TextEmbedding::try_new` performs a clean one-time
+    // download instead of reusing the broken snapshot forever.
+    println!(
+        "[embeddings] incomplete model cache (missing {} in {}); clearing and re-downloading",
+        missing.join(", "),
+        snapshot_dir.display()
+    );
+    if let Err(e) = std::fs::remove_dir_all(&repo_dir) {
+        return Err(format!("Failed to clear incomplete model cache: {e}"));
+    }
+    Ok(())
 }
 
 /// Resolves the absolute cache directory for fastembed's model weights.
