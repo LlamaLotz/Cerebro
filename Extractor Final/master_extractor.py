@@ -1,6 +1,118 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
+
+
+# =============================================================================
+# Isolated ingestion environment (~/.prism/env)
+# =============================================================================
+# Homebrew Python on macOS (3.12+) is an "externally-managed" environment
+# (PEP 668), so `pip install` into it fails with exit status 1 unless you pass
+# `--break-system-packages`. Instead of breaking the system interpreter, the
+# extractor runs inside a dedicated virtualenv at ~/.prism/env. A venv's pip is
+# never externally managed, so installs succeed on every OS with no special
+# flags.
+
+PRISM_ENV_DIR = Path.home() / ".prism" / "env"
+
+
+def _env_python_pip():
+    """Paths to the venv interpreter/pip without creating anything."""
+    env_dir = PRISM_ENV_DIR
+    if sys.platform == "win32":
+        return str(env_dir / "Scripts" / "python.exe"), str(env_dir / "Scripts" / "pip.exe")
+    return str(env_dir / "bin" / "python"), str(env_dir / "bin" / "pip")
+
+
+def get_prism_env():
+    """Create (if missing) and return (python_bin, pip_bin) for the isolated
+    ~/.prism/env virtualenv."""
+    env_dir = PRISM_ENV_DIR
+    if not env_dir.exists():
+        print(f"[Prism Ingestion] Creating isolated virtual environment at {env_dir}...")
+        subprocess.run([sys.executable, "-m", "venv", str(env_dir)], check=True)
+    return _env_python_pip()
+
+
+def is_prism_env_active():
+    """True when this interpreter IS the one inside ~/.prism/env."""
+    try:
+        return Path(sys.executable).resolve() == Path(_env_python_pip()[0]).resolve()
+    except Exception:
+        return False
+
+
+def pip_install_args(*packages):
+    """Build a `pip install` command for the current interpreter.
+
+    Inside the venv this is a plain `pip install`. On macOS, if we're still on
+    the externally-managed Homebrew interpreter (venv bootstrap failed), add
+    `--break-system-packages` to bypass PEP 668.
+    """
+    cmd = [sys.executable, "-m", "pip", "install"]
+    in_venv = sys.prefix != sys.base_prefix
+    if sys.platform == "darwin" and not in_venv:
+        cmd.append("--break-system-packages")
+    cmd.extend(packages)
+    return cmd
+
+
+# Everything the extractor imports, so the venv is self-contained on first
+# run. requests + beautifulsoup4 cover the URL ingestion path.
+REQUIRED_PACKAGES = [
+    "yt-dlp",
+    "docling",
+    "faster-whisper",
+    "requests",
+    "beautifulsoup4",
+    "tqdm",
+    "pypdf",
+    "crawl4ai",
+    "pandas",
+    "numpy",
+    "Pillow",
+    "opencv-python",
+    "rapidocr-plugin-openvino",
+    "pydantic-settings",
+    "typer",
+]
+
+
+def bootstrap_isolated_environment():
+    """Ensure ~/.prism/env exists and this script is running inside it.
+
+    First run: create the venv, install the ingestion stack into it, then
+    re-exec this script under the venv interpreter (before any third-party
+    imports). Subsequent runs are a no-op.
+    """
+    if is_prism_env_active():
+        return
+
+    try:
+        python_bin, _pip_bin = get_prism_env()
+
+        print("[Prism Ingestion] Installing/upgrading ingestion packages "
+              "(first run can take several minutes)...")
+        # Use `python -m pip` (not the pip shim) so installs work even if the
+        # venv was created without a pip entrypoint script.
+        subprocess.run(
+            [python_bin, "-m", "pip", "install", "--upgrade", "pip"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        subprocess.run(
+            [python_bin, "-m", "pip", "install", "--upgrade", *REQUIRED_PACKAGES],
+            check=True,
+        )
+
+        print("[Prism Ingestion] Relaunching inside isolated environment...\n")
+        os.execv(python_bin, [python_bin] + sys.argv)
+    except Exception as e:
+        print(f"[Prism Ingestion ERROR] Failed to set up isolated environment: {e}")
+        print("Falling back to the system interpreter (some imports may fail).\n")
+
 
 # Self-Healing Environment: Check and auto-install core dependencies before importing them
 def auto_heal_environment():
@@ -20,6 +132,8 @@ def auto_heal_environment():
         "rapidocr": "rapidocr-plugin-openvino",
         "pydantic_settings": "pydantic-settings",
         "typer": "typer",
+        "requests": "requests",
+        "bs4": "beautifulsoup4",
     }
     
     missing_standard = []
@@ -40,20 +154,17 @@ def auto_heal_environment():
         print(f"\n[Prism Self-Healing] Environment needs repair.")
         try:
             # Upgrade pip first
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.check_call(pip_install_args("--upgrade", "pip"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             # Install Standard Packages
             if missing_standard:
                 print(f"Installing missing packages: {missing_standard}")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", *missing_standard])
+                subprocess.check_call(pip_install_args(*missing_standard))
             
             # Install Torch Packages
             if missing_torch:
                 print("Installing torch, torchvision, torchaudio (this may take a while)...")
-                subprocess.check_call([
-                    sys.executable, "-m", "pip", "install", 
-                    "torch", "torchvision", "torchaudio"
-                ])
+                subprocess.check_call(pip_install_args("torch", "torchvision", "torchaudio"))
                 
             print("[Prism Self-Healing] Environment repaired! Restarting script...\n")
             os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -61,6 +172,7 @@ def auto_heal_environment():
             print(f"[Prism Self-Healing ERROR] Failed to auto-install: {e}")
             print("Please install these packages manually.\n")
 
+bootstrap_isolated_environment()
 auto_heal_environment()
 
 import re

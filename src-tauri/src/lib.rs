@@ -1027,6 +1027,23 @@ fn find_python() -> String {
     "python3".to_string()
 }
 
+// Interpreter for the isolated ingestion venv (~/.prism/env). The extractor
+// bootstraps this venv on first run (see master_extractor.py); prefer it once
+// it exists and fall back to a system interpreter otherwise.
+fn find_prism_python(app: &tauri::AppHandle) -> String {
+    if let Ok(home) = app.path().home_dir() {
+        #[cfg(target_os = "windows")]
+        let candidate = home.join(".prism").join("env").join("Scripts").join("python.exe");
+        #[cfg(not(target_os = "windows"))]
+        let candidate = home.join(".prism").join("env").join("bin").join("python");
+
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    find_python()
+}
+
 // Helper to find Extractor script
 fn resolve_resource_file(app: &tauri::AppHandle, relative_subpath: &str) -> PathBuf {
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -1065,7 +1082,7 @@ async fn run_builtin_extractor_async(
         return Err(format!("Extractor script not found at path: {:?}", script_path));
     }
 
-    let python_cmd = find_python();
+    let python_cmd = find_prism_python(&app);
 
     let clean_script_path = script_path.to_string_lossy()
         .trim_start_matches(r"\\?\")
