@@ -16,6 +16,7 @@ import { backfillEmbeddings, generateAndStoreEmbedding, generateAndStoreBlockEmb
 import { appLogger } from './services/appLogger';
 import { formatNote, noteTitleMatches } from './utils/formatter';
 import { applyAccentColor } from './utils/accentColor';
+import { applyWindowIcon } from './services/appIcon';
 import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
@@ -201,6 +202,11 @@ export default function App() {
       hoverGlow: settings.appearance.hoverGlowColor,
     });
   }, [settings.appearance.accentColor, settings.appearance.hoverGlowColor]);
+
+  // Apply the chosen logo as the OS window (taskbar) icon.
+  useEffect(() => {
+    applyWindowIcon(settings.appearance.appIcon);
+  }, [settings.appearance.appIcon]);
 
   // Startup splash: visible until settings load AND the vault's first index
   // completes (or is skipped because no vault is connected), then fades out.

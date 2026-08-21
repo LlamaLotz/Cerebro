@@ -157,6 +157,69 @@ fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// Resolves the absolute cache directory for fastembed's model weights.
+///
+/// The model lives in the app's own cache directory — `~/Library/Caches/<bundle>/fastembed`
+/// on macOS, `%LOCALAPPDATA%\<bundle>\cache\fastembed` on Windows — which is always
+/// an absolute, non-symlinked path. On macOS, paths under `~/.cache/huggingface`
+/// (and symlinked temp dirs like `/tmp`) can trip fastembed's one-time
+/// HuggingFace downloader into raw URL-parse failures (`RelativeUrlWithoutBase`),
+/// so the app-owned cache dir is used instead.
+///
+/// Backwards compatibility: an existing complete model in the legacy
+/// `~/.prism/models` location keeps being used so existing installs don't
+/// re-download the ~100 MB weights on upgrade.
+fn resolve_embedding_cache_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let new_dir = app_handle
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("fastembed");
+    let legacy_dir = app_handle
+        .path()
+        .home_dir()
+        .map_err(|e| e.to_string())?
+        .join(".prism")
+        .join("models");
+    if !new_dir.join(EMBEDDING_REPO_DIR).exists()
+        && legacy_dir.join(EMBEDDING_REPO_DIR).exists()
+    {
+        return Ok(legacy_dir);
+    }
+    Ok(new_dir)
+}
+
+/// Maps raw embedding-engine init/download failures to a clean, user-facing
+/// message. fastembed's one-time HuggingFace download can surface raw
+/// URL-parsing errors (e.g. `RelativeUrlWithoutBase`) or transport errors when
+/// the machine is offline — none of those should ever leak to the UI or break
+/// file loading. Our own cache-verification message passes through unchanged.
+fn sanitize_embedding_error(raw: String) -> String {
+    if raw.contains("Embedding model cache is incomplete") {
+        return raw;
+    }
+    let lower = raw.to_lowercase();
+    if raw.contains("RelativeUrlWithoutBase")
+        || raw.contains("relative url")
+        || lower.contains("ureq")
+        || lower.contains("reqwest")
+        || lower.contains("connection")
+        || lower.contains("tls")
+        || lower.contains("dns")
+        || lower.contains("timeout")
+        || lower.contains("network")
+        || lower.contains("download")
+        || lower.contains("fetch")
+    {
+        "Semantic search requires an initial internet connection to download the model \
+         weights. Related notes and block matching will become available automatically \
+         once the model is downloaded (one-time)."
+            .to_string()
+    } else {
+        raw
+    }
+}
+
 /// Lazily initializes the semantic embedding engine (model load + HNSW rebuild).
 fn get_embedding_engine(
     state: &tauri::State<'_, AppState>,
@@ -168,22 +231,17 @@ fn get_embedding_engine(
     }
 
     let conn = db::init_db(app_handle)?;
-    let home = app_handle.path().home_dir().map_err(|e| e.to_string())?;
-    let cache_dir = home.join(".prism").join("models");
+    // Absolute, app-owned cache dir (see `resolve_embedding_cache_dir`) — a
+    // relative or symlinked path is the root cause of fastembed's
+    // `RelativeUrlWithoutBase` download failure on macOS.
+    let cache_dir = resolve_embedding_cache_dir(app_handle)?;
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
 
     // Runtime-tunable embedding parameters (similarity threshold, threads,
     // batch size) come from the persisted config.
     let runtime_config = config::load_runtime_config(app_handle).unwrap_or_default();
     let result = verify_model_cache(&cache_dir)
-        .and_then(|_| {
-            EmbeddingEngine::new(&conn, cache_dir, &runtime_config).map_err(|e| {
-                format!(
-                    "{e} - the local embedding model could not be loaded; \
-                     a one-time internet connection may be required to download it."
-                )
-            })
-        })
+        .and_then(|_| EmbeddingEngine::new(&conn, cache_dir, &runtime_config).map_err(sanitize_embedding_error))
         .map(Arc::new);
 
     *guard = Some(result.clone());
@@ -306,7 +364,16 @@ async fn backfill_embeddings(
         }
     }
 
-    let engine = get_embedding_engine(&state, &app_handle)?;
+    // Model unavailable (offline first run, one-time download pending): tags
+    // are already synced above, so report a clean no-op instead of failing the
+    // command. The sanitized reason is logged for diagnostics.
+    let engine = match get_embedding_engine(&state, &app_handle) {
+        Ok(engine) => engine,
+        Err(msg) => {
+            println!("[embeddings] backfill skipped: {msg}");
+            return Ok(0);
+        }
+    };
 
     let mut total = 0usize;
 

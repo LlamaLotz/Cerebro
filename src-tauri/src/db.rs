@@ -187,6 +187,43 @@ fn migrate_backlinks(conn: &Connection) -> Result<(), String> {
         }
     }
 
+    // 3. Older deployed layout has `matched_text TEXT NOT NULL`, which blocks
+    //    storing applied-[[wikilink]] backlinks (those have no matched mention
+    //    text — the link is explicit, so `matched_text` is NULL and the UI
+    //    renders "Links to this note"). Rebuild the table with a nullable
+    //    column; rows carry over unchanged.
+    {
+        let sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='backlinks'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(sql) = sql {
+            if sql.contains("matched_text TEXT NOT NULL") {
+                conn.execute_batch(
+                    "ALTER TABLE backlinks RENAME TO backlinks_old;
+                     CREATE TABLE backlinks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_path TEXT NOT NULL,
+                        target_path TEXT NOT NULL,
+                        target_block_id TEXT,
+                        start_line INTEGER NOT NULL DEFAULT 1,
+                        end_line INTEGER NOT NULL DEFAULT 1,
+                        matched_text TEXT
+                     );
+                     INSERT INTO backlinks (id, source_path, target_path, target_block_id, start_line, end_line, matched_text)
+                        SELECT id, source_path, target_path, target_block_id, start_line, end_line, matched_text FROM backlinks_old;
+                     DROP TABLE backlinks_old;
+                     CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_path);
+                     CREATE INDEX IF NOT EXISTS idx_backlinks_source ON backlinks(source_path);",
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -221,7 +258,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             target_block_id TEXT,
             start_line INTEGER NOT NULL DEFAULT 1,
             end_line INTEGER NOT NULL DEFAULT 1,
-            matched_text TEXT NOT NULL
+            matched_text TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_backlinks_target ON backlinks(target_path);
         CREATE INDEX IF NOT EXISTS idx_backlinks_source ON backlinks(source_path);
@@ -637,8 +674,12 @@ pub fn update_backlinks(
     // Precompute newline offsets once; every mention then resolves its line via
     // binary search instead of rescaming the note prefix.
     let line_starts = build_line_starts(content);
-    let mut per_target: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut per_target: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut total = 0usize;
+    // Targets already stored as mention backlinks. A note that is BOTH a
+    // plain-text mention and a [[wikilink]] appears once — the mention row
+    // wins, since it carries the matched text + line range.
+    let mut inserted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for mention in mentions {
         if mention.target_note_id == source_path {
@@ -647,12 +688,13 @@ pub fn update_backlinks(
         if total >= MAX_BACKLINKS_PER_NOTE {
             break;
         }
-        let count = per_target.entry(mention.target_note_id.as_str()).or_insert(0);
+        let count = per_target.entry(mention.target_note_id.clone()).or_insert(0);
         if *count >= MAX_BACKLINKS_PER_TARGET {
             continue;
         }
         *count += 1;
         total += 1;
+        inserted.insert(mention.target_note_id.clone());
         let start_line = line_number(&line_starts, mention.start);
         let end_line = line_number(&line_starts, mention.end);
         tx.execute(
@@ -667,6 +709,46 @@ pub fn update_backlinks(
             ],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    // Applied [[wikilink]]s are backlinks too: the mention scanner skips
+    // wikilink spans (they're already linked), so without this a note that
+    // links to another via [[...]] would never appear under the target's
+    // backlinks — the "Links to this note" case the UI already renders.
+    // Target titles are resolved back to note ids (paths — id == path) via
+    // the notes table; `matched_text` stays NULL for these rows.
+    {
+        let mut resolve = tx
+            .prepare("SELECT id FROM notes WHERE lower(title) = lower(?1) OR id = ?1")
+            .map_err(|e| e.to_string())?;
+        for target in extract_applied_links(content) {
+            if total >= MAX_BACKLINKS_PER_NOTE {
+                break;
+            }
+            let ids: Vec<String> = resolve
+                .query_map(params![target], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .collect();
+            for id in ids {
+                if id == source_path || inserted.contains(&id) {
+                    continue;
+                }
+                let count = per_target.entry(id.clone()).or_insert(0);
+                if *count >= MAX_BACKLINKS_PER_TARGET {
+                    continue;
+                }
+                *count += 1;
+                total += 1;
+                inserted.insert(id.clone());
+                tx.execute(
+                    "INSERT INTO backlinks (source_path, target_path, target_block_id, start_line, end_line, matched_text)
+                     VALUES (?1, ?2, NULL, 1, 1, NULL)",
+                    params![source_path, id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
 
     tx.commit().map_err(|e| e.to_string())
@@ -1364,6 +1446,49 @@ mod tests {
         // Offset 10 is past the first newline => line 2; offset 21 => line 3.
         assert_eq!(backlinks[0].start_line, 2);
         assert_eq!(backlinks[0].end_line, 3);
+    }
+
+    #[test]
+    fn test_applied_wikilinks_create_backlinks() {
+        let db = Database::open(":memory:").unwrap();
+        upsert_note(&db.conn, "src", "Source Note", "/src.md", &[]).unwrap();
+        upsert_note(&db.conn, "dst", "Target Note", "/dst.md", &[]).unwrap();
+
+        // Source links to dst via [[wikilink]] only — the mention scanner
+        // skips wikilink spans, so the backlink must come from the applied
+        // link itself, with a NULL matched_text ("Links to this note").
+        // Note ids double as paths in the app, so the resolved target id
+        // ("dst") is what the target lookup filters on.
+        let content = "See [[Target Note]] for details.\n";
+        update_backlinks(&db.conn, "src", &[], content).unwrap();
+
+        let backlinks = get_incoming_backlinks(&db.conn, "dst").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "src");
+        assert_eq!(backlinks[0].source_title, "Source Note");
+        assert_eq!(backlinks[0].matched_text, None);
+    }
+
+    #[test]
+    fn test_wikilink_backlink_dedupes_against_mention() {
+        let db = Database::open(":memory:").unwrap();
+        upsert_note(&db.conn, "src", "Source Note", "/src.md", &[]).unwrap();
+        upsert_note(&db.conn, "dst", "Target Note", "/dst.md", &[]).unwrap();
+
+        // dst is BOTH a plain-text mention and a [[wikilink]]: exactly one
+        // backlink row (the mention row wins — it carries the matched text).
+        let mention = LinkMention {
+            target_note_id: "dst".to_string(),
+            matched_text: "Target Note".to_string(),
+            start: 0,
+            end: 11,
+        };
+        let content = "Target Note is here: [[Target Note]].\n";
+        update_backlinks(&db.conn, "src", &[mention], content).unwrap();
+
+        let backlinks = get_incoming_backlinks(&db.conn, "dst").unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].matched_text.as_deref(), Some("Target Note"));
     }
 
     #[test]

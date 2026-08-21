@@ -1,3 +1,5 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Image as TauriImage } from '@tauri-apps/api/image';
 import blueAC from '../assets/logos/Blue AC.svg';
 import bwAC from '../assets/logos/BW AC.svg';
 import greyAC from '../assets/logos/Grey AC.svg';
@@ -57,4 +59,44 @@ export function getAppIcon(id?: string): string {
   if (!id) return '/logo.png';
   if (id.startsWith('data:')) return id;
   return APP_ICONS.find((icon) => icon.id === id)?.url ?? '/logo.png';
+}
+
+/**
+ * Rasterizes any resolvable icon URL (SVG, PNG, data URL, bundled asset) to
+ * RGBA PNG bytes by drawing it through a canvas at a fixed size.
+ */
+async function rasterizeToPng(url: string, size = 256): Promise<Uint8Array> {
+  const img = new window.Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error(`Failed to load icon: ${url}`));
+    img.src = url;
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  ctx.clearRect(0, 0, size, size);
+  ctx.drawImage(img, 0, 0, size, size);
+  const blob = await new Promise<Blob>((resolve) =>
+    canvas.toBlob((b) => resolve(b as Blob), 'image/png')
+  );
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * Applies the chosen logo as the OS window icon (taskbar on Windows, window
+ * icon on macOS/Linux). Falls back silently if the runtime icon can't be set
+ * (e.g. bundled builds with a locked window icon).
+ */
+export async function applyWindowIcon(id?: string): Promise<void> {
+  try {
+    const url = getAppIcon(id);
+    const png = await rasterizeToPng(url);
+    const icon = await TauriImage.fromBytes(png);
+    await getCurrentWindow().setIcon(icon);
+  } catch (err) {
+    console.error('applyWindowIcon failed:', err);
+  }
 }
