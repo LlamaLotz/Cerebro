@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getAppIcon, getSplashLoader } from '../services/appIcon';
+import whiteLogo from '../assets/logos/White.svg';
 
 interface SplashScreenProps {
   /** True while the app + vault are still booting; flips false when ready. */
@@ -18,6 +19,10 @@ interface SplashScreenProps {
  */
 export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
   const [fade, setFade] = useState(false);
+  // Static (white no-rainbow) logo shows first; the animated loader swaps in
+  // only once the video has actually loaded and is ready to play, so the
+  // splash never stutters or flashes blank while the mp4 decodes.
+  const [videoReady, setVideoReady] = useState(false);
 
   useEffect(() => {
     if (!isLoading) {
@@ -28,6 +33,7 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
   }, [isLoading, onFinish]);
 
   const loaderVideo = getSplashLoader(logo);
+  const handleVideoReady = () => setVideoReady(true);
 
   return (
     <div
@@ -36,23 +42,31 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
       }`}
     >
       <div className="splash-in flex flex-col items-center gap-7 px-8 rounded-none">
-        {loaderVideo ? (
-          <video
-            src={loaderVideo}
-            autoPlay
-            loop
-            muted
-            playsInline
-            aria-label="Prism Logo"
-            className="splash-logo w-80 h-80 rounded-none object-contain"
-          />
-        ) : (
+        <div className="relative w-80 h-80 splash-logo rounded-none">
+          {loaderVideo && (
+            <video
+              src={loaderVideo}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              onLoadedData={handleVideoReady}
+              onCanPlayThrough={handleVideoReady}
+              aria-label="Prism Logo"
+              className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+                videoReady ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+          )}
           <img
-            src={getAppIcon(logo)}
+            src={loaderVideo ? whiteLogo : getAppIcon(logo)}
             alt="Prism Logo"
-            className="splash-logo w-80 h-80 rounded-none object-contain"
+            className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
+              loaderVideo && videoReady ? 'opacity-0' : 'opacity-100'
+            }`}
           />
-        )}
+        </div>
         <div className="flex flex-col items-center gap-2 text-center rounded-none">
           <h1 className="text-8xl font-serif italic tracking-wide text-offwhite">
             Prism
