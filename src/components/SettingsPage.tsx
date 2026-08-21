@@ -768,6 +768,23 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setInstallLogs(res.output);
   };
 
+  // Restart the app. Persists the current draft first (Rust
+  // ~/.prism/settings.json is the source of truth read on startup) so
+  // unsaved changes survive, then closes and relaunches the whole process.
+  const handleRefreshApp = async () => {
+    try {
+      await tauriAPI.saveRuntimeConfig(draft);
+    } catch (e) {
+      console.error('Failed to persist settings before refresh:', e);
+    }
+    try {
+      await tauriAPI.relaunchApp();
+    } catch (e) {
+      console.error('Failed to relaunch app:', e);
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex bg-neutral-950 text-neutral-100 select-none">
       {/* Left section nav */}
@@ -1470,6 +1487,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       max={3650}
                       suffix="days"
                     />
+                  </Field>
+                  <Field
+                    label="Refresh app"
+                    hint="Restart the Prism window. Any unsaved changes are saved first, and settings that only apply on launch take effect."
+                  >
+                    <button
+                      type="button"
+                      onClick={handleRefreshApp}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer"
+                    >
+                      <RotateCw className="w-4 h-4" /> Refresh App
+                    </button>
                   </Field>
                 </div>
               </div>

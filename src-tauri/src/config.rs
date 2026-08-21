@@ -40,6 +40,16 @@ pub struct AppearanceConfig {
     pub label_quality: String,
     pub auto_rotate_on_load: bool,
     pub auto_rotate_speed: f64,
+    /// Brand accent color (hex) applied as the CSS --color-brand-* ramp.
+    pub accent_color: String,
+    /// Color of the button/slider hover underglow (hex).
+    pub hover_glow_color: String,
+    /// Base color for knowledge-graph nodes (hex).
+    pub graph_node_color: String,
+    /// Selected app icon (logo id, empty = default /logo.png).
+    pub app_icon: String,
+    /// Status line beside the sidebar logo; supports {date}/{time} tokens.
+    pub sidebar_status_text: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -110,6 +120,11 @@ impl Default for AppearanceConfig {
             label_quality: "high".to_string(),
             auto_rotate_on_load: false,
             auto_rotate_speed: 0.67,
+            accent_color: "#FEB05D".to_string(),
+            hover_glow_color: "#FEB05D".to_string(),
+            graph_node_color: "#FEB05D".to_string(),
+            app_icon: String::new(),
+            sidebar_status_text: String::new(),
         }
     }
 }
@@ -210,10 +225,17 @@ mod tests {
         assert!(json.contains("\"injectUserProfile\""));
         assert!(json.contains("\"backgroundPattern\""));
         assert!(json.contains("\"userProfile\""));
+        assert!(json.contains("\"accentColor\""));
+        assert!(json.contains("\"hoverGlowColor\""));
+        assert!(json.contains("\"graphNodeColor\""));
+        assert!(json.contains("\"appIcon\""));
+        assert!(json.contains("\"sidebarStatusText\""));
 
         let back: RuntimeConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.appearance.background_pattern, "grid");
         assert_eq!(back.appearance.default_graph_mode, "3d");
+        assert_eq!(back.appearance.accent_color, "#FEB05D");
+        assert_eq!(back.appearance.app_icon, "");
         assert!((back.linking.similarity_threshold - 0.70).abs() < 1e-6);
         assert_eq!(back.linking.embedding_threads, 1);
         assert_eq!(back.system.version_retention_days, 0);

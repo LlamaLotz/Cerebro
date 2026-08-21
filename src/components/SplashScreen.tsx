@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAppIcon } from '../services/appIcon';
+import { getAppIcon, getSplashLoader } from '../services/appIcon';
 
 interface SplashScreenProps {
   /** True while the app + vault are still booting; flips false when ready. */
@@ -11,9 +11,10 @@ interface SplashScreenProps {
 }
 
 /**
- * Startup splash overlay. Mounts on launch, shows the Prism logo, product
- * title and an `ldrs` loader, then fades itself out and calls `onFinish` once
- * `isLoading` goes false. The parent unmounts it after the fade completes.
+ * Startup splash overlay. Mounts on launch, shows the animated Prism logo
+ * (an mp4 loader color-matched to the chosen logo), the product title, then
+ * fades itself out and calls `onFinish` once `isLoading` goes false. The
+ * parent unmounts it after the fade completes.
  */
 export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
   const [fade, setFade] = useState(false);
@@ -26,25 +27,36 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
     }
   }, [isLoading, onFinish]);
 
+  const loaderVideo = getSplashLoader(logo);
+
   return (
     <div
-      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-base rounded-none transition-opacity duration-[400ms] ease-out ${
+      className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black rounded-none transition-opacity duration-[400ms] ease-out ${
         fade ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >
       <div className="splash-in flex flex-col items-center gap-7 px-8 rounded-none">
-        <img
-          src={getAppIcon(logo)}
-          alt="Prism Logo"
-          className="splash-logo w-56 h-56 rounded-none object-contain"
-        />
+        {loaderVideo ? (
+          <video
+            src={loaderVideo}
+            autoPlay
+            loop
+            muted
+            playsInline
+            aria-label="Prism Logo"
+            className="splash-logo w-80 h-80 rounded-none object-contain"
+          />
+        ) : (
+          <img
+            src={getAppIcon(logo)}
+            alt="Prism Logo"
+            className="splash-logo w-80 h-80 rounded-none object-contain"
+          />
+        )}
         <div className="flex flex-col items-center gap-2 text-center rounded-none">
-          <h1 className="text-6xl font-serif italic tracking-wide text-offwhite">
+          <h1 className="text-8xl font-serif italic tracking-wide text-offwhite">
             Prism
           </h1>
-        </div>
-        <div className="mt-4 rounded-none">
-          <l-quantum size="42" speed="1.75" color="#FEB05D" />
         </div>
       </div>
     </div>

@@ -7,12 +7,17 @@ import whiteAC from '../assets/logos/White AC.svg';
 import blue from '../assets/logos/Blue.svg';
 import grey from '../assets/logos/Grey.svg';
 import white from '../assets/logos/White.svg';
+import loaderBlue from '../assets/loaders/Blue.mp4';
+import loaderBW from '../assets/loaders/BW.mp4';
+import loaderGrey from '../assets/loaders/Grey.mp4';
+import loaderWhite from '../assets/loaders/White.mp4';
 
 /**
  * The Prism logos the user can pick from as the app icon (SVG, transparent
- * backgrounds). The rainbow set uses the AC variants only; a separate
- * no-rainbow set is grouped under its own label in the settings UI.
- * `appIcon` in settings stores the option `id`; getAppIcon() resolves it.
+ * backgrounds). The rainbow set uses the AC variants; a separate no-rainbow
+ * set and a monochrome (black & white) set are grouped under their own labels
+ * in the settings UI. `appIcon` in settings stores the option `id`;
+ * getAppIcon() resolves it.
  */
 export interface AppIconOption {
   id: string;
@@ -32,7 +37,6 @@ export const APP_ICON_GROUPS: AppIconGroup[] = [
     label: 'With Rainbow',
     icons: [
       { id: 'blue-ac', label: 'Blue', url: blueAC },
-      { id: 'bw-ac', label: 'Black & White', url: bwAC },
       { id: 'grey-ac', label: 'Grey', url: greyAC },
       { id: 'white-ac', label: 'White', url: whiteAC },
     ],
@@ -45,6 +49,11 @@ export const APP_ICON_GROUPS: AppIconGroup[] = [
       { id: 'grey', label: 'Grey', url: grey },
       { id: 'white', label: 'White', url: white },
     ],
+  },
+  {
+    id: 'monochrome',
+    label: 'Monochrome',
+    icons: [{ id: 'bw-ac', label: 'Black & White', url: bwAC }],
   },
 ];
 
@@ -59,6 +68,32 @@ export function getAppIcon(id?: string): string {
   if (!id) return '/logo.png';
   if (id.startsWith('data:')) return id;
   return APP_ICONS.find((icon) => icon.id === id)?.url ?? '/logo.png';
+}
+
+/**
+ * Animated splash loaders (mp4) keyed by the logo color they match. Blue,
+ * grey and white variants (rainbow or no-rainbow) collapse onto their shared
+ * color video; the monochrome black & white logo maps to the BW loader.
+ */
+const SPLASH_LOADERS: Record<string, string> = {
+  blue: loaderBlue,
+  'blue-ac': loaderBlue,
+  grey: loaderGrey,
+  'grey-ac': loaderGrey,
+  white: loaderWhite,
+  'white-ac': loaderWhite,
+  'bw-ac': loaderBW,
+};
+
+/**
+ * Resolves a stored app-icon id to its matching animated splash loader video.
+ * Empty/default ids fall back to the blue loader; unknown ids and legacy
+ * data-URL uploads return `undefined` so callers can show a static fallback.
+ */
+export function getSplashLoader(id?: string): string | undefined {
+  if (!id) return loaderBlue;
+  if (id.startsWith('data:')) return undefined;
+  return SPLASH_LOADERS[id];
 }
 
 /**

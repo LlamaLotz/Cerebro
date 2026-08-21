@@ -1375,6 +1375,24 @@ fn purge_expired_history(
     db::history::purge_expired_history(&conn, retention_days)
 }
 
+/// Fully closes Prism and starts a fresh instance of the current executable.
+/// Unlike a webview reload, this tears down and restarts the whole Tauri
+/// process so anything initialized at startup (watcher, DB caches, etc.) is
+/// rebuilt. The new process is detached so it survives the exit of this one.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve executable: {e}"))?;
+    std::process::Command::new(exe)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to relaunch: {e}"))?;
+    app.exit(0);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1468,7 +1486,8 @@ pub fn run() {
             get_all_reconstructed_versions,
             get_runtime_config,
             save_runtime_config,
-            purge_expired_history
+            purge_expired_history,
+            relaunch_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

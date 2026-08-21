@@ -5,6 +5,8 @@ import {
   Trash2,
   Minimize2,
   Loader2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useIngestion, LogEntry, IngestionProgress } from '../services/ingestionStore';
 
@@ -40,6 +42,7 @@ const FILTERS: { value: FilterLevel; label: string }[] = [
 export const IngestionLogPanel: React.FC = () => {
   const { logs, progress, isMinimized, setMinimized, isHidden, setHidden, clearLogs } = useIngestion();
   const [filter, setFilter] = useState<FilterLevel>('all');
+  const [copied, setCopied] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
 
@@ -177,6 +180,20 @@ export const IngestionLogPanel: React.FC = () => {
     stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   };
 
+  // Copy the currently visible log entries to the clipboard as plain text.
+  const handleCopyLogs = async () => {
+    const text = filteredLogs
+      .map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`)
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch (e) {
+      console.error('Failed to copy logs:', e);
+    }
+  };
+
   const statusMeta = STATUS_META[progress.status];
   const percent =
     progress.total > 0
@@ -290,6 +307,13 @@ export const IngestionLogPanel: React.FC = () => {
         </div>
         <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
           <button
+            onClick={handleCopyLogs}
+            className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition-colors"
+            title={copied ? 'Copied!' : 'Copy logs'}
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+          <button
             onClick={clearLogs}
             className="p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-900 transition-colors"
             title="Clear logs"
@@ -339,7 +363,7 @@ export const IngestionLogPanel: React.FC = () => {
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto font-mono text-[11px]"
+        className="flex-1 overflow-y-auto font-mono text-[11px] select-text"
       >
         {filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-slate-600 italic text-xs">

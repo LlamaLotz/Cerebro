@@ -303,6 +303,11 @@ export const tauriAPI = {
   purgeExpiredHistory: async (retentionDays: number): Promise<void> => {
     await invoke('purge_expired_history', { retentionDays });
   },
+  // Fully closes Prism and starts a fresh instance (real process restart, not
+  // a webview reload). Never resolves on success — the process exits.
+  relaunchApp: async (): Promise<void> => {
+    await invoke('relaunch_app');
+  },
   onVaultChanged: (callback: (data: { eventType: string; filename: string }) => void) => {
     // Return unsubscribe no-op since UI action saves trigger list refresh directly
     return () => {};

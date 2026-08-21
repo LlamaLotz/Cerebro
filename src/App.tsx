@@ -221,8 +221,9 @@ export default function App() {
     if (splashDismissedRef.current) return;
     if (!settingsReadyRef.current || !vaultReadyRef.current) return;
     splashDismissedRef.current = true;
-    // Hold the splash briefly so it reads as a deliberate intro, not a flash.
-    const remaining = Math.max(0, 900 - (Date.now() - splashMountedAtRef.current));
+    // Hold the splash for a full 7 seconds so the animated loader plays out
+    // as a deliberate intro instead of a flash.
+    const remaining = Math.max(0, 7000 - (Date.now() - splashMountedAtRef.current));
     setTimeout(() => setIsBooting(false), remaining);
   };
 
