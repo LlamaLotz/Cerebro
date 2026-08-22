@@ -7,10 +7,10 @@ import whiteAC from '../assets/logos/White AC.svg';
 import blue from '../assets/logos/Blue.svg';
 import grey from '../assets/logos/Grey.svg';
 import white from '../assets/logos/White.svg';
-import loaderBlue from '../assets/loaders/Blue.mp4';
-import loaderBW from '../assets/loaders/BW.mp4';
-import loaderGrey from '../assets/loaders/Grey.mp4';
-import loaderWhite from '../assets/loaders/White.mp4';
+import loaderBlue from '../assets/loaders/Blue.webp';
+import loaderBW from '../assets/loaders/BW.webp';
+import loaderGrey from '../assets/loaders/Grey.webp';
+import loaderWhite from '../assets/loaders/White.webp';
 
 /**
  * The Prism logos the user can pick from as the app icon (SVG, transparent
