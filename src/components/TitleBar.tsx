@@ -168,14 +168,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         className="flex items-center h-full gap-1.5 pl-3 cursor-default"
       >
         <img src={getAppIcon(appIcon)} alt="" className="w-6 h-6 shrink-0 pointer-events-none object-contain" />
-        {!isMacOS && <span className="text-[11px] font-display font-semibold tracking-[0.2em] text-offwhite pointer-events-none">PRISM</span>}
+
       </div>
 
       {/* ── Windows/Linux: menu bar ── */}
       {!isMacOS && (
         <>
-          <div className="mx-1 w-px h-4 bg-border pointer-events-none" />
-
           {/* Prism dropdown */}
           <div className="relative">
             <button
@@ -212,10 +210,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             )}
           </div>
 
-          <div className="mx-1 w-px h-4 bg-border pointer-events-none" />
-
           {/* File / Edit / View dropdowns */}
           {Object.entries(menus).filter(([k]) => k !== 'prism').map(([key, { label, items }]) => (
+
             <div key={key} className="relative">
               <button
                 onMouseDown={(e) => { e.preventDefault(); setOpenMenu(openMenu === key ? null : key); }}
@@ -255,9 +252,6 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           <div className="mx-1 w-px h-4 bg-border pointer-events-none" />
         </>
       )}
-
-      {/* ── Separator ── */}
-      {!isMacOS && <div className="mx-1 w-px h-4 bg-border pointer-events-none" />}
 
       {/* ── View tabs (icons) ── */}
       <div className="flex items-center gap-0.5">
