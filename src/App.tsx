@@ -209,22 +209,20 @@ export default function App() {
   }, [settings.appearance.appIcon]);
 
   // Startup splash: the static logo shows while boot + first-run backfill run;
-  // once both are done the animated video plays (on a now-idle CPU), then the
-  // splash fades out. A timeout caps the static phase so a slow first-run
-  // backfill never stalls the intro.
+  // the animated video only plays once ALL booting work is finished (on an
+  // idle CPU), then the splash fades out.
   const [isBooting, setIsBooting] = useState(true);
   const [playVideo, setPlayVideo] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
   const settingsReadyRef = useRef(false);
   const vaultReadyRef = useRef(false);
   const backfillDoneRef = useRef(false);
-  const backfillTimedOutRef = useRef(false);
   const playVideoStartedRef = useRef(false);
 
   const tryPlayVideo = () => {
     if (playVideoStartedRef.current) return;
     if (!settingsReadyRef.current || !vaultReadyRef.current) return;
-    if (!backfillDoneRef.current && !backfillTimedOutRef.current) return;
+    if (!backfillDoneRef.current) return;
     playVideoStartedRef.current = true;
     setPlayVideo(true);
     // Let the animated logo play out before fading the splash away.
@@ -653,11 +651,6 @@ export default function App() {
             backfillDoneRef.current = true;
             tryPlayVideo();
           });
-        // Cap the static phase: if the backfill is slow, play the video anyway.
-        setTimeout(() => {
-          backfillTimedOutRef.current = true;
-          tryPlayVideo();
-        }, 8000);
       } else {
         backfillDoneRef.current = true;
       }
