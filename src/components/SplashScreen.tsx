@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getAppIcon, getSplashLoader } from '../services/appIcon';
 import whiteLogo from '../assets/logos/White.svg';
 
@@ -23,6 +23,7 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
   // only once the video has actually loaded and is ready to play, so the
   // splash never stutters or flashes blank while the mp4 decodes.
   const [videoReady, setVideoReady] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     if (!isLoading) {
@@ -33,7 +34,31 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
   }, [isLoading, onFinish]);
 
   const loaderVideo = getSplashLoader(logo);
-  const handleVideoReady = () => setVideoReady(true);
+
+  // Detect when the mp4 is actually playable. Uses native listeners + a
+  // readyState check instead of React's synthetic onLoadedData/onCanPlayThrough,
+  // which can miss media events that fire during mount for a locally-served
+  // file — in that case the video would never swap in and the static logo
+  // would stay forever.
+  useEffect(() => {
+    if (!loaderVideo) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const markReady = () => setVideoReady(true);
+    if (video.readyState >= 2) {
+      markReady();
+      return;
+    }
+    video.addEventListener('loadeddata', markReady);
+    video.addEventListener('canplaythrough', markReady);
+    video.addEventListener('playing', markReady);
+    return () => {
+      video.removeEventListener('loadeddata', markReady);
+      video.removeEventListener('canplaythrough', markReady);
+      video.removeEventListener('playing', markReady);
+    };
+  }, [loaderVideo]);
 
   return (
     <div
@@ -45,14 +70,13 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
         <div className="relative w-80 h-80 splash-logo rounded-none">
           {loaderVideo && (
             <video
+              ref={videoRef}
               src={loaderVideo}
               autoPlay
               loop
               muted
               playsInline
               preload="auto"
-              onLoadedData={handleVideoReady}
-              onCanPlayThrough={handleVideoReady}
               aria-label="Prism Logo"
               className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
                 videoReady ? 'opacity-100' : 'opacity-0'

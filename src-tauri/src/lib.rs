@@ -123,9 +123,9 @@ const EMBEDDING_REQUIRED_FILES: [&str; 5] = [
 
 /// Verifies the local fastembed cache holds the full set of model files.
 /// A cache dir without `refs/main` (never downloaded) passes so fastembed can
-/// attempt the one-time download. A *started* download that left the snapshot
-/// incomplete is cleared so the next load re-downloads the model cleanly,
-/// instead of failing (and staying broken) on every launch.
+/// attempt the one-time download. An interrupted download that left the
+/// snapshot incomplete is left in place: hf_hub's `get()` re-downloads only
+/// the missing files on the next load, preserving the already-fetched weights.
 fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
     let repo_dir = cache_dir.join(EMBEDDING_REPO_DIR);
     if !repo_dir.exists() {
@@ -149,17 +149,15 @@ fn verify_model_cache(cache_dir: &std::path::Path) -> Result<(), String> {
         return Ok(());
     }
 
-    // Interrupted/partial download: remove the whole repo (including
-    // `refs/main`) so `TextEmbedding::try_new` performs a clean one-time
-    // download instead of reusing the broken snapshot forever.
+    // Interrupted/partial download: leave the cache in place and let hf_hub
+    // re-download only the missing files on load (its `get()` checks each file
+    // and fetches absent ones). This preserves the already-downloaded ~100 MB
+    // weights instead of nuking the whole repo and forcing a full re-download.
     println!(
-        "[embeddings] incomplete model cache (missing {} in {}); clearing and re-downloading",
+        "[embeddings] incomplete model cache (missing {} in {}); re-downloading missing files",
         missing.join(", "),
         snapshot_dir.display()
     );
-    if let Err(e) = std::fs::remove_dir_all(&repo_dir) {
-        return Err(format!("Failed to clear incomplete model cache: {e}"));
-    }
     Ok(())
 }
 
@@ -201,6 +199,9 @@ fn resolve_embedding_cache_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf,
 /// the machine is offline — none of those should ever leak to the UI or break
 /// file loading. Our own cache-verification message passes through unchanged.
 fn sanitize_embedding_error(raw: String) -> String {
+    // Log the raw cause so download failures are diagnosable — the sanitized
+    // message hides whether it was a network error, a 404, TLS failure, etc.
+    println!("[embeddings] model load failed: {raw}");
     if raw.contains("Embedding model cache is incomplete") {
         return raw;
     }
