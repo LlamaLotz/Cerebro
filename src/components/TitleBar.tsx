@@ -1,20 +1,40 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Minus, Square, Copy, X } from 'lucide-react';
+import { Minus, Square, Copy, X, FileText, SplitSquareVertical, Network, Tags, Sparkles } from 'lucide-react';
 import { getAppIcon } from '../services/appIcon';
 
+type Layout = 'editor' | 'graph' | 'split' | 'topics';
+
+interface TitleBarProps {
+  /** Custom app icon id from the rainbow logo registry. */
+  appIcon?: string;
+  /** Current workspace layout mode. */
+  layout: Layout;
+  /** Called when the user clicks a view-tab button. */
+  onLayoutChange: (layout: Layout) => void;
+  /** Whether the AI Co-Pilot sidebar is open. */
+  showAI: boolean;
+  /** Toggle the AI Co-Pilot sidebar. */
+  onToggleAI: () => void;
+}
+
 /**
- * Custom frameless-window titlebar. The OS decorations are disabled
- * (`decorations: false` in tauri.conf.json), so this bar provides the drag
- * region plus minimize / maximize-restore / close controls.
+ * Custom frameless-window titlebar for Windows. The OS decorations are
+ * disabled (`decorations: false` in tauri.conf.json), so this bar provides
+ * the drag region, workspace view tabs, AI toggle, and window controls —
+ * all in a single 36 px strip to maximise vertical content space.
  *
- * The drag region is scoped to the logo + title area only; the button cluster
- * is a sibling (NOT inside `data-tauri-drag-region`) so clicks always land on
- * the buttons instead of initiating a window drag.
+ * Layout mirrors VS Code / native Windows 11 apps:
+ *   [icon] [PRISM] ··· [Editor][Split][Graph][Topics] ··· [AI ✦] [—][□][×]
  */
-export const TitleBar: React.FC<{ appIcon?: string }> = ({ appIcon = '' }) => {
+export const TitleBar: React.FC<TitleBarProps> = ({
+  appIcon = '',
+  layout,
+  onLayoutChange,
+  showAI,
+  onToggleAI,
+}) => {
   const [maximized, setMaximized] = useState(false);
-  // Memoize so the effect below doesn't re-subscribe `onResized` on every render.
   const appWindow = useMemo(() => getCurrentWindow(), []);
 
   useEffect(() => {
@@ -28,8 +48,6 @@ export const TitleBar: React.FC<{ appIcon?: string }> = ({ appIcon = '' }) => {
       })
       .catch(() => {});
 
-    // `onResized` fires on maximize / unmaximize / manual resize — the only
-    // reliable way to keep the restore/maximize icon in sync across platforms.
     appWindow
       .onResized(async () => {
         try {
@@ -50,12 +68,30 @@ export const TitleBar: React.FC<{ appIcon?: string }> = ({ appIcon = '' }) => {
     };
   }, [appWindow]);
 
+  const tabButton = (
+    id: Layout,
+    Icon: React.FC<{ className?: string }>,
+    label: string,
+  ) => (
+    <button
+      onClick={() => onLayoutChange(id)}
+      title={label}
+      className={`p-1.5 rounded transition-colors ${
+        layout === id
+          ? 'bg-surface text-brand-400'
+          : 'text-text-muted hover:text-offwhite hover:bg-surface-hover'
+      }`}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </button>
+  );
+
   return (
     <div className="relative flex items-center h-9 bg-base border-b border-border shrink-0 select-none z-40 rounded-none">
       {/* Drag region: logo + product name */}
       <div
         data-tauri-drag-region
-        className="flex-1 h-full flex items-center gap-2 pl-3 cursor-default"
+        className="flex items-center h-full gap-2 pl-3 cursor-default"
       >
         <img
           src={getAppIcon(appIcon)}
@@ -66,6 +102,33 @@ export const TitleBar: React.FC<{ appIcon?: string }> = ({ appIcon = '' }) => {
           PRISM
         </span>
       </div>
+
+      {/* Separator dot */}
+      <div className="mx-2 w-px h-4 bg-border pointer-events-none" />
+
+      {/* View tabs (center-left, outside drag region) */}
+      <div className="flex items-center gap-0.5">
+        {tabButton('editor', FileText, 'Note Editor')}
+        {tabButton('split', SplitSquareVertical, 'Split View')}
+        {tabButton('graph', Network, 'Graph Network')}
+        {tabButton('topics', Tags, 'Topic Groups')}
+      </div>
+
+      {/* Spacer — pushes right-side controls to the edge */}
+      <div className="flex-1" data-tauri-drag-region />
+
+      {/* AI Co-Pilot toggle */}
+      <button
+        onClick={onToggleAI}
+        title="OmniRoute AI Co-Pilot"
+        className={`mr-1 p-1.5 rounded transition-colors ${
+          showAI
+            ? 'text-brand-400 bg-brand-600/10'
+            : 'text-text-muted hover:text-offwhite hover:bg-surface-hover'
+        }`}
+      >
+        <Sparkles className="w-3.5 h-3.5" />
+      </button>
 
       {/* Window controls (excluded from the drag region) */}
       <div className="flex items-center h-full shrink-0">

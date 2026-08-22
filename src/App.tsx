@@ -1265,8 +1265,14 @@ export default function App() {
           keeps the CPU/GPU idle so the loader plays without stutter. */}
       {!isBooting && (
         <>
-          {/* Custom frameless-window titlebar (drag region + window controls) */}
-          <TitleBar appIcon={settings.appearance.appIcon} />
+          {/* Custom frameless-window titlebar: drag region + view tabs + window controls */}
+          <TitleBar
+            appIcon={settings.appearance.appIcon}
+            layout={layout}
+            onLayoutChange={setLayout}
+            showAI={showAICoPilot}
+            onToggleAI={() => setShowAICoPilot(!showAICoPilot)}
+          />
 
       <div className="flex flex-1 overflow-hidden">
       {/* Sidebar navigation (collapsible) */}
@@ -1318,67 +1324,7 @@ export default function App() {
       {/* Primary Workspace Panel */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         
-        {/* Workspace Toolbar/Tabs */}
-        <div className="workspace-toolbar h-14 border-b border-neutral-900 bg-neutral-950/40 px-6 flex items-center justify-between shrink-0">
-           <div className="flex items-center gap-1 bg-neutral-950 border border-neutral-900 rounded-lg p-1">
-             <button
-               onClick={() => setLayout('editor')}
-               className={`p-2 rounded-md transition-all ${
-                 layout === 'editor'
-                 ? 'bg-surface text-brand-400 border border-brand-500'
-                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
-               }`}
-               title="Note Editor"
-             >
-               <FileText className="w-4 h-4" />
-             </button>
-             <button
-               onClick={() => setLayout('split')}
-               className={`p-2 rounded-md transition-all ${
-                 layout === 'split'
-                 ? 'bg-surface text-brand-400 border border-brand-500'
-                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
-               }`}
-               title="Split View"
-             >
-               <SplitSquareVertical className="w-4 h-4" />
-             </button>
-             <button
-               onClick={() => setLayout('graph')}
-               className={`p-2 rounded-md transition-all ${
-                 layout === 'graph'
-                 ? 'bg-surface text-brand-400 border border-brand-500'
-                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
-               }`}
-               title="Graph Network"
-             >
-               <Network className="w-4 h-4" />
-             </button>
-             <button
-               onClick={() => setLayout('topics')}
-               className={`p-2 rounded-md transition-all ${
-                 layout === 'topics'
-                 ? 'bg-surface text-brand-400 border border-brand-500'
-                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/50 border border-transparent'
-               }`}
-               title="Topic Groups (@tags)"
-             >
-               <Tags className="w-4 h-4" />
-             </button>
-           </div>
 
-           <button
-             onClick={() => setShowAICoPilot(!showAICoPilot)}
-             className={`p-2 border rounded-lg transition-all ${
-               showAICoPilot 
-                 ? 'bg-brand-600/10 border-brand-500/30 text-brand-400' 
-                 : 'bg-panel border border-border text-slate-400 hover:text-slate-200'
-             }`}
-             title="OmniRoute AI Co-Pilot"
-           >
-             <Sparkles className="w-4 h-4" />
-           </button>
-         </div>
 
         {/* Workspace Main Panels */}
         <div className="flex-1 flex overflow-hidden">
