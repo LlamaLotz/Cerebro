@@ -37,6 +37,11 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
   // Detect when the mp4 is buffered enough to play. Uses native listeners +
   // a readyState check instead of React's synthetic events, which can miss
   // media events that fire during mount for a locally-served file.
+  //
+  // On macOS (WKWebView), preload="auto" alone does not always trigger
+  // loading for files served from Tauri's custom protocol, so we call
+  // video.load() explicitly and add a timeout fallback in case the
+  // browser never fires loadeddata/canplaythrough.
   useEffect(() => {
     if (!loaderVideo) return;
     const video = videoRef.current;
@@ -47,11 +52,23 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
       markReady();
       return;
     }
+
+    // Force WKWebView (and other engines) to begin loading the video.
+    video.load();
+
     video.addEventListener('loadeddata', markReady);
     video.addEventListener('canplaythrough', markReady);
+    video.addEventListener('error', markReady);
+
+    // Fallback: if the video never loads (e.g. macOS WKWebView blocks it),
+    // mark it ready after a short delay so the splash isn't stuck forever.
+    const fallback = setTimeout(markReady, 2000);
+
     return () => {
+      clearTimeout(fallback);
       video.removeEventListener('loadeddata', markReady);
       video.removeEventListener('canplaythrough', markReady);
+      video.removeEventListener('error', markReady);
     };
   }, [loaderVideo]);
 
@@ -88,6 +105,8 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
               className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
                 showVideo ? 'opacity-100' : 'opacity-0'
               }`}
+              onLoadedData={() => setVideoReady(true)}
+              onCanPlayThrough={() => setVideoReady(true)}
             />
           )}
           <img
