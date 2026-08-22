@@ -1,5 +1,5 @@
-use tauri::menu::{Menu, MenuBuilder, Submenu, SubmenuBuilder, MenuItemBuilder, PredefinedMenuItem};
-use tauri::{App, AppHandle, Manager};
+use tauri::menu::{Menu, MenuBuilder, SubmenuBuilder, MenuItemBuilder, PredefinedMenuItem};
+use tauri::{App, AppHandle, Emitter, Manager};
 
 /// Builds the native application menu bar.
 ///
@@ -120,8 +120,8 @@ pub fn build_app_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, Box<dyn std::
         .separator()
         .item(&PredefinedMenuItem::services(app, Some("Services"))?)
         .separator()
-        .item(&PredefinedMenuItem::hide(app, Some("Hide Prism"), Some("Cmd+H"))?)
-        .item(&PredefinedMenuItem::hide_others(app, Some("Hide Others"), Some("Cmd+Option+H"))?)
+        .item(&PredefinedMenuItem::hide(app, Some("Hide Prism"))?)
+        .item(&PredefinedMenuItem::hide_others(app, Some("Hide Others"))?)
         .item(&PredefinedMenuItem::show_all(app, Some("Show All"))?)
         .separator()
         .item(&PredefinedMenuItem::quit(app, Some("Quit Prism"))?)
