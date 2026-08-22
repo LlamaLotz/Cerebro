@@ -226,7 +226,7 @@ export default function App() {
     playVideoStartedRef.current = true;
     setPlayVideo(true);
     // Let the animated logo play out before fading the splash away.
-    setTimeout(() => setIsBooting(false), 7000);
+    setTimeout(() => setIsBooting(false), 6400);
   };
 
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
@@ -1169,8 +1169,14 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-base text-slate-100 font-sans overflow-hidden select-none">
-      {/* Custom frameless-window titlebar (drag region + window controls) */}
-      <TitleBar appIcon={settings.appearance.appIcon} />
+      {/* Everything except the splash is gated on boot completing: the heavy
+          UI (graph force simulation, editor, sidebar) is invisible behind the
+          opaque splash anyway, and not mounting it until the video is done
+          keeps the CPU/GPU idle so the loader plays without stutter. */}
+      {!isBooting && (
+        <>
+          {/* Custom frameless-window titlebar (drag region + window controls) */}
+          <TitleBar appIcon={settings.appearance.appIcon} />
 
       <div className="flex flex-1 overflow-hidden">
       {/* Sidebar navigation (collapsible) */}
@@ -1409,6 +1415,8 @@ export default function App() {
             if (n) handleDeleteNote(n);
           }}
         />
+      )}
+        </>
       )}
 
       {/* Startup splash overlay (fades out once boot completes) */}
