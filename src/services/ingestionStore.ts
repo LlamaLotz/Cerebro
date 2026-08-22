@@ -131,21 +131,36 @@ export const IngestionProvider: React.FC<{ children: ReactNode }> = ({ children 
     [addLog]
   );
 
-  // Background listeners: collect extraction output even while the UI is minimized
+  // Background listeners: collect extraction output even while the UI is minimized.
+  // Keep async registration cancellation-safe: React StrictMode mounts effects,
+  // cleans them up, then mounts them again in development. Without this guard,
+  // a listener that resolves after cleanup survives and every line is displayed
+  // twice on the next ingestion run.
   useEffect(() => {
+    let disposed = false;
     let disposeProgress: (() => void) | undefined;
     let disposeError: (() => void) | undefined;
 
-    (async () => {
-      disposeProgress = await listen<string>('ingestion-progress', (event) => {
+    const registerListeners = async () => {
+      const progressUnlisten = await listen<string>('ingestion-progress', (event) => {
         handleProgressLine(String(event.payload));
       });
-      disposeError = await listen<string>('ingestion-error', (event) => {
+      if (disposed) progressUnlisten();
+      else disposeProgress = progressUnlisten;
+
+      const errorUnlisten = await listen<string>('ingestion-error', (event) => {
         addLog({ level: 'error', message: String(event.payload) });
       });
-    })();
+      if (disposed) errorUnlisten();
+      else disposeError = errorUnlisten;
+    };
+
+    registerListeners().catch((error) => {
+      if (!disposed) console.error('Failed to register ingestion listeners:', error);
+    });
 
     return () => {
+      disposed = true;
       disposeProgress?.();
       disposeError?.();
     };

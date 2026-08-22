@@ -21,6 +21,7 @@ import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
 import { TitleBar } from './components/TitleBar';
+
 import { SplashScreen } from './components/SplashScreen';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
@@ -984,16 +985,35 @@ export default function App() {
     }
   };
 
-  // Create a folder in the vault (nested paths like "Projects/Book" work).
+  // Create a folder in the vault. Nested paths are supported up to five
+  // folder levels (for example: Projects/Books/2026/Research/Archive).
   const handleNewFolder = async () => {
     if (!settings.vaultPath) return;
-    const name = await prompt('Enter folder name (nested paths work, e.g. Projects/Book):', {
-      title: 'New folder',
-    });
+    const name = await prompt(
+      'Enter folder path (up to 5 nested levels, e.g. Projects/Books/2026):',
+      { title: 'New folder' }
+    );
     if (!name?.trim()) return;
+
+    const relativePath = name.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const parts = relativePath.split('/').filter(Boolean);
+    if (
+      parts.length === 0 ||
+      parts.some((part) => part === '.' || part === '..')
+    ) {
+      await alert('Please enter a valid folder path.', { title: 'Invalid folder path' });
+      return;
+    }
+    if (parts.length > 5) {
+      await alert('Folders can be nested up to 5 levels deep.', {
+        title: 'Folder nesting limit',
+      });
+      return;
+    }
+
     const res = await tauriAPI.createFolder({
       vaultPath: settings.vaultPath,
-      relativePath: name.trim(),
+      relativePath,
     });
     if (!res.success) {
       await alert(`Error creating folder: ${res.error ?? 'unknown error'}`, {
@@ -1178,6 +1198,114 @@ export default function App() {
     localStorage.setItem(`prism_order_${settings.vaultPath}`, JSON.stringify(newNotes.map(n => n.path)));
   };
 
+  // Move a note by dragging it onto a folder or the vault root.
+  const handleMoveNoteToFolder = async (note: NoteFile, targetFolder: string) => {
+    if (!settings.vaultPath) return;
+    const normalizedTarget = targetFolder.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (normalizedTarget.split('/').filter(Boolean).length > 5) {
+      await alert('Folders can be nested up to 5 levels deep.', {
+        title: 'Folder nesting limit',
+      });
+      return;
+    }
+    const fileName = note.relativePath.replace(/\\/g, '/').split('/').pop();
+    if (!fileName) return;
+    const newRelativePath = normalizedTarget ? `${normalizedTarget}/${fileName}` : fileName;
+    const vaultRoot = settings.vaultPath.replace(/[\\/]+$/, '');
+    const newPath = `${vaultRoot}/${newRelativePath}`;
+    if (note.path.replace(/\\/g, '/') === newPath.replace(/\\/g, '/')) return;
+
+    const collision = notes.some(
+      (n) => n.path !== note.path && n.path.replace(/\\/g, '/').toLowerCase() === newPath.replace(/\\/g, '/').toLowerCase()
+    );
+    if (collision) {
+      await alert(`A note named "${fileName}" already exists in that folder.`, {
+        title: 'Could not move note',
+      });
+      return;
+    }
+
+    const result = await tauriAPI.renameFile({ oldPath: note.path, newPath });
+    if (!result.success) {
+      await alert(`Error moving note: ${result.error ?? 'unknown error'}`, {
+        title: 'Could not move note',
+      });
+      return;
+    }
+
+    if (activeNote?.path === note.path) {
+      setActiveNote((prev) => (prev ? { ...prev, path: newPath, relativePath: newRelativePath } : prev));
+    }
+    const orderKey = `prism_order_${settings.vaultPath}`;
+    const orderRaw = localStorage.getItem(orderKey);
+    if (orderRaw) {
+      try {
+        const order: string[] = JSON.parse(orderRaw);
+        const index = order.indexOf(note.path);
+        if (index !== -1) {
+          order[index] = newPath;
+          localStorage.setItem(orderKey, JSON.stringify(order));
+        }
+      } catch {
+        // Ignore malformed custom ordering data.
+      }
+    }
+    await fetchNotes();
+    appLogger.info(`Note moved: ${note.relativePath} -> ${newRelativePath}`);
+  };
+
+  // Move a folder by dragging it onto another folder or the vault root.
+  const handleMoveFolderToFolder = async (folderPath: string, targetFolder: string) => {
+    if (!settings.vaultPath) return;
+    const source = folderPath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const target = targetFolder.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!source || source === target || target.startsWith(`${source}/`)) return;
+
+    const leaf = source.split('/').pop();
+    if (!leaf) return;
+    const newRelativePath = target ? `${target}/${leaf}` : leaf;
+    const newDepth = newRelativePath.split('/').filter(Boolean).length;
+    if (newDepth > 5) {
+      await alert('Folders can be nested up to 5 levels deep.', {
+        title: 'Folder nesting limit',
+      });
+      return;
+    }
+    if (folders.some((f) => f.replace(/\\/g, '/') === newRelativePath)) {
+      await alert(`A folder named "${leaf}" already exists in that location.`, {
+        title: 'Could not move folder',
+      });
+      return;
+    }
+
+    const result = await tauriAPI.renameFolder({
+      vaultPath: settings.vaultPath,
+      oldRelativePath: source,
+      newRelativePath,
+    });
+    if (!result.success) {
+      await alert(`Error moving folder: ${result.error ?? 'unknown error'}`, {
+        title: 'Could not move folder',
+      });
+      return;
+    }
+
+    const oldAbsolute = `${settings.vaultPath.replace(/[\\/]+$/, '')}/${source}`.toLowerCase();
+    const newAbsolute = `${settings.vaultPath.replace(/[\\/]+$/, '')}/${newRelativePath}`;
+    if (activeNote) {
+      const activePath = activeNote.path.replace(/\\/g, '/');
+      if (activePath.toLowerCase().startsWith(`${oldAbsolute}/`)) {
+        setActiveNote((prev) => prev ? {
+          ...prev,
+          path: `${newAbsolute}/${activePath.slice(oldAbsolute.length + 1)}`,
+          relativePath: `${newRelativePath}/${activeNote.relativePath.replace(/\\/g, '/').slice(source.length + 1)}`,
+        } : prev);
+      }
+    }
+    await fetchNotes();
+    appLogger.info(`Folder moved: ${source} -> ${newRelativePath}`);
+  };
+
   // Plain note selection (sidebar/new/delete): never a block jump, so clear
   // any stale scrollRequest from a previous wiki-link traversal — otherwise
   // the Editor's jump effect would re-fire against the newly opened note.
@@ -1278,6 +1406,16 @@ export default function App() {
             onLayoutChange={setLayout}
             showAI={showAICoPilot}
             onToggleAI={() => setShowAICoPilot(!showAICoPilot)}
+            onNewNote={handleNewNote}
+            onNewFolder={handleNewFolder}
+            onOpenPrism={() => setIsIngestModalOpen(true)}
+            onSettings={() => openSettings()}
+            onReload={() => tauriAPI.relaunchApp()}
+            onToggleIngestionLogs={() => {
+              setIngestionHidden(!isIngestionHidden);
+            }}
+            onToggleSidebar={toggleSidebar}
+            sidebarVisible={!sidebarCollapsed}
           />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1308,6 +1446,8 @@ export default function App() {
             onDeleteNote={handleDeleteNote}
             onRenameNote={handleRenameNote}
             onMoveNote={handleMoveNote}
+            onMoveNoteToFolder={handleMoveNoteToFolder}
+            onMoveFolderToFolder={handleMoveFolderToFolder}
             vaultPath={settings.vaultPath}
             onSelectVault={handleSelectVault}
             onRefresh={() => fetchNotes()}

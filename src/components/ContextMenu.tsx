@@ -185,6 +185,15 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       {variant === 'folder' && (
         <>
           <Item
+            icon={FolderPlus}
+            label="New Folder"
+            onClick={() => {
+              onClose();
+              onNewFolder?.();
+            }}
+          />
+          <div className="mx-2 my-1 border-t border-neutral-800" />
+          <Item
             icon={Pencil}
             label="Rename Folder"
             onClick={() => {
@@ -207,6 +216,15 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
       {variant === 'note' && (
         <>
+          <Item
+            icon={FolderPlus}
+            label="New Folder"
+            onClick={() => {
+              onClose();
+              onNewFolder?.();
+            }}
+          />
+          <div className="mx-2 my-1 border-t border-neutral-800" />
           <Item
             icon={Edit3}
             label="Rename Note"

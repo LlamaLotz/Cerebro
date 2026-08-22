@@ -29,6 +29,10 @@ interface SidebarProps {
   onDeleteNote: (note: NoteFile) => void;
   onRenameNote: (note: NoteFile) => void;
   onMoveNote: (note: NoteFile, direction: 'up' | 'down') => void;
+  /** Move a note into a target folder; empty target means the vault root. */
+  onMoveNoteToFolder: (note: NoteFile, targetFolder: string) => void;
+  /** Move a folder into a target folder; empty target means the vault root. */
+  onMoveFolderToFolder: (folderPath: string, targetFolder: string) => void;
   vaultPath: string;
   onSelectVault: () => void;
   onRefresh: () => void;
@@ -126,6 +130,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteNote,
   onRenameNote,
   onMoveNote,
+  onMoveNoteToFolder,
+  onMoveFolderToFolder,
   vaultPath,
   onSelectVault,
   onRefresh,
@@ -222,23 +228,115 @@ export const Sidebar: React.FC<SidebarProps> = ({
     [notes, foldersProp]
   );
 
-  // Note row (shared by root notes and folder contents; `depth` controls the
-  // left padding so nested notes read as belonging to their folder).
+  // Pointer-based in-app dragging is used instead of HTML5 drag events. It
+  // works consistently in Tauri's WebView and supports dropping onto folders
+  // or the sidebar background to move an item to the vault root.
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [draggingPath, setDraggingPath] = useState<string | null>(null);
+  const notesRef = useRef(notes);
+  const moveNoteRef = useRef(onMoveNoteToFolder);
+  const moveFolderRef = useRef(onMoveFolderToFolder);
+  const pointerDragRef = useRef<{
+    type: 'note' | 'folder';
+    path: string;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+    target: string | null;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  notesRef.current = notes;
+  moveNoteRef.current = onMoveNoteToFolder;
+  moveFolderRef.current = onMoveFolderToFolder;
+
+  const startPointerDrag = (
+    event: React.PointerEvent,
+    item: { type: 'note' | 'folder'; path: string }
+  ) => {
+    const target = event.target;
+    if (event.button !== 0 || (target instanceof Element && target.closest('button'))) return;
+    pointerDragRef.current = {
+      ...item,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+      target: null,
+    };
+  };
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = pointerDragRef.current;
+      if (!drag) return;
+      if (!drag.dragging) {
+        const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+        if (distance < 6) return;
+        drag.dragging = true;
+        suppressClickRef.current = true;
+        setDraggingPath(drag.path);
+        document.body.style.userSelect = 'none';
+      }
+
+      event.preventDefault();
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const folder = element?.closest('[data-folder-drop-target]') as HTMLElement | null;
+      const sidebar = element?.closest('[data-region="sidebar"]');
+      drag.target = folder?.dataset.folderDropTarget ?? (sidebar ? '' : null);
+      setDragOverFolder(drag.target);
+    };
+
+    const handlePointerUp = () => {
+      const drag = pointerDragRef.current;
+      pointerDragRef.current = null;
+      document.body.style.userSelect = '';
+      setDragOverFolder(null);
+      setDraggingPath(null);
+      if (!drag?.dragging || drag.target === null) return;
+
+      if (drag.type === 'note') {
+        const note = notesRef.current.find((entry) => entry.path === drag.path);
+        if (note) moveNoteRef.current(note, drag.target);
+      } else {
+        moveFolderRef.current(drag.path, drag.target);
+      }
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { capture: true });
+    window.addEventListener('pointerup', handlePointerUp, { capture: true });
+    window.addEventListener('pointercancel', handlePointerUp, { capture: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('pointercancel', handlePointerUp, true);
+      document.body.style.userSelect = '';
+      setDraggingPath(null);
+    };
+  }, []);
+
   const renderNote = (note: NoteFile, depth: number) => {
     const isActive = activeNote?.path === note.path;
     return (
       <div
         key={note.path}
         data-note-path={note.path}
-        className={`group flex items-center justify-between text-xs px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
+        className={`group flex items-center justify-between text-xs px-3 py-2.5 rounded-lg transition-all ${
+          draggingPath === note.path ? 'cursor-grabbing' : 'cursor-default'
+        } ${
           isActive 
             ? 'bg-slate-900 border-l-2 border-brand-400 text-brand-100 font-medium' 
             : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
         }`}
         style={{ paddingLeft: depth * 16 + 12 }}
-        onClick={() => onSelectNote(note)}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          onSelectNote(note);
+        }}
         onDoubleClick={() => onOpenNote(note)}
-        title="Double-click to open in the full editor"
+        onPointerDown={(e) => startPointerDrag(e, { type: 'note', path: note.path })}
+        title="Double-click to open in the full editor; drag to move"
       >
         <div className="flex items-center gap-2 truncate flex-1 pr-2">
           <FileText className={`w-4 h-4 shrink-0 ${isActive ? 'text-brand-400' : 'text-slate-500'}`} />
@@ -274,21 +372,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Folder row: expand/collapse chevron, name, note count, and a delete
   // button in the pill (shown on hover) that removes the folder + contents.
+  // Notes and folders are draggable; dropping onto a folder nests the item,
+  // while dropping on the sidebar background moves it back to the vault root.
   const renderFolder = (folder: FolderNode, depth: number) => {
     const isCollapsed = collapsed.has(folder.relativePath);
     const total = countNotes(folder);
     return (
-      <div key={folder.relativePath}>
+      <div key={folder.relativePath} data-folder-drop-target={folder.relativePath}>
         <div
           data-folder-path={folder.relativePath}
-          className={`group flex items-center justify-between text-xs px-3 py-2 rounded-lg cursor-pointer transition-all ${
+          className={`group flex items-center justify-between text-xs px-3 py-2 rounded-lg transition-all ${
+            draggingPath === folder.relativePath ? 'cursor-grabbing' : 'cursor-default'
+          } ${
             isCollapsed
               ? 'text-slate-500 hover:text-slate-300'
               : 'text-slate-300 hover:text-slate-100 hover:bg-slate-900/50'
-          }`}
+          } ${dragOverFolder === folder.relativePath ? 'ring-1 ring-brand-400 bg-brand-500/10' : ''}`}
           style={{ paddingLeft: depth * 16 + 8 }}
-          onClick={() => toggleFolder(folder.relativePath)}
-          title={isCollapsed ? `Expand ${folder.name}` : `Collapse ${folder.name}`}
+          onClick={() => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
+            toggleFolder(folder.relativePath);
+          }}
+          onPointerDown={(e) => startPointerDrag(e, { type: 'folder', path: folder.relativePath })}
+          title={`${isCollapsed ? 'Expand' : 'Collapse'} ${folder.name}; drag to move or nest` }
         >
           <div className="flex items-center gap-1.5 truncate flex-1 pr-2">
             <ChevronRight
@@ -337,7 +446,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div
       data-region="sidebar"
-      className="sidebar w-full border-r border-slate-900 bg-panel flex flex-col h-full select-none"
+      className={`sidebar w-full border-r border-slate-900 bg-panel flex flex-col h-full select-none ${
+        dragOverFolder === '' ? 'ring-1 ring-inset ring-brand-400/60' : ''
+      }`}
+
     >
       {/* App Header */}
       <div className="p-4 border-b border-slate-900 flex items-center justify-between">

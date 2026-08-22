@@ -798,10 +798,44 @@ fn read_file(file_path: String) -> Result<String, String> {
     fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
+const MAX_VAULT_FOLDER_DEPTH: usize = 5;
+
+/// Validates a path supplied by the frontend before joining it to the vault.
+/// Folder nesting is intentionally limited to five levels from the vault root.
+fn validate_vault_relative_path(relative_path: &str, is_file: bool) -> Result<PathBuf, String> {
+    let normalized = relative_path.replace('\\', "/");
+    if normalized.starts_with('/') || Path::new(relative_path).is_absolute() {
+        return Err("Path must be relative to the vault".to_string());
+    }
+
+    let parts: Vec<&str> = normalized.split('/').filter(|part| !part.is_empty()).collect();
+    if parts.is_empty()
+        || parts.iter().any(|part| {
+            *part == "." || *part == ".." || part.contains('\0') || part.contains(':')
+        })
+    {
+        return Err("Invalid vault path".to_string());
+    }
+
+    let folder_depth = if is_file {
+        parts.len().saturating_sub(1)
+    } else {
+        parts.len()
+    };
+    if folder_depth > MAX_VAULT_FOLDER_DEPTH {
+        return Err(format!(
+            "Folders can be nested up to {MAX_VAULT_FOLDER_DEPTH} levels deep"
+        ));
+    }
+
+    Ok(PathBuf::from(parts.join("/")))
+}
+
 #[tauri::command]
 fn create_file(vault_path: String, relative_path: String, content: Option<String>) -> Result<String, String> {
     let root = Path::new(&vault_path);
-    let mut file_path = root.join(&relative_path);
+    let validated_relative_path = validate_vault_relative_path(&relative_path, true)?;
+    let mut file_path = root.join(validated_relative_path);
     
     // Ensure extension is .md
     if let Some(ext) = file_path.extension() {
@@ -828,7 +862,8 @@ fn create_file(vault_path: String, relative_path: String, content: Option<String
 
 #[tauri::command]
 fn create_folder(vault_path: String, relative_path: String) -> Result<String, String> {
-    let dir = Path::new(&vault_path).join(&relative_path);
+    let validated_relative_path = validate_vault_relative_path(&relative_path, false)?;
+    let dir = Path::new(&vault_path).join(validated_relative_path);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().to_string())
 }
@@ -840,7 +875,8 @@ fn delete_folder(
     only_if_empty: Option<bool>,
 ) -> Result<(), String> {
     let root = Path::new(&vault_path);
-    let dir = root.join(&relative_path);
+    let validated_relative_path = validate_vault_relative_path(&relative_path, false)?;
+    let dir = root.join(validated_relative_path);
 
     // Reject path traversal, the vault root itself, and the app-managed
     // sidecar folder (its deletion would orphan note metadata).
@@ -896,8 +932,10 @@ fn rename_folder(
     new_relative_path: String,
 ) -> Result<(), String> {
     let root = Path::new(&vault_path);
-    let old_dir = root.join(&old_relative_path);
-    let new_dir = root.join(&new_relative_path);
+    let old_relative = validate_vault_relative_path(&old_relative_path, false)?;
+    let new_relative = validate_vault_relative_path(&new_relative_path, false)?;
+    let old_dir = root.join(old_relative);
+    let new_dir = root.join(new_relative);
 
     // Reject path traversal, the vault root itself, and the app-managed
     // sidecar folder (same guards as delete_folder).
