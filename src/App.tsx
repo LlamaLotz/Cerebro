@@ -221,12 +221,17 @@ export default function App() {
 
   const tryPlayVideo = () => {
     if (playVideoStartedRef.current) return;
-    if (!settingsReadyRef.current || !vaultReadyRef.current) return;
-    if (!backfillDoneRef.current) return;
+    if (!settingsReadyRef.current || !vaultReadyRef.current || !backfillDoneRef.current) return;
     playVideoStartedRef.current = true;
     setPlayVideo(true);
-    // Let the animated logo play out before fading the splash away.
-    setTimeout(() => setIsBooting(false), 6400);
+    // Every piece of boot work (settings, vault index, H1 sync, watcher,
+    // first-run semantic backfill) is done by now, so the CPU/GPU are idle
+    // and the animated logo can play back without stutter. Play it 400 ms
+    // short of a full loop (7360 ms) before fading the splash away, so the
+    // fade begins just before the loop would restart. The heavy UI is gated
+    // on `splashVisible`, so it only mounts after the splash is gone and
+    // never competes with the loader.
+    setTimeout(() => setIsBooting(false), 6960);
   };
 
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
@@ -1259,11 +1264,12 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-base text-slate-100 font-sans overflow-hidden select-none">
-      {/* Everything except the splash is gated on boot completing: the heavy
-          UI (graph force simulation, editor, sidebar) is invisible behind the
-          opaque splash anyway, and not mounting it until the video is done
-          keeps the CPU/GPU idle so the loader plays without stutter. */}
-      {!isBooting && (
+      {/* Everything except the splash is gated until the splash is fully gone
+          (splashVisible false): the heavy UI (graph force simulation, editor,
+          sidebar) only mounts after the loader animation has finished and the
+          splash has faded out, so its WebGL / force-sim init never competes
+          with the loader playback and can't stutter it in the final second. */}
+      {!splashVisible && (
         <>
           {/* Custom frameless-window titlebar: drag region + view tabs + window controls */}
           <TitleBar
