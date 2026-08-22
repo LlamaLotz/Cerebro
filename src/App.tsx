@@ -228,7 +228,7 @@ export default function App() {
     playVideoStartedRef.current = true;
     setPlayVideo(true);
     // Let the animated logo play out before fading the splash away.
-    setTimeout(() => setIsBooting(false), 3000);
+    setTimeout(() => setIsBooting(false), 7000);
   };
 
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
