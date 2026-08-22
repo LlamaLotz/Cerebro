@@ -34,14 +34,13 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
 
   const loaderVideo = getSplashLoader(logo);
 
-  // Detect when the mp4 is buffered enough to play. Uses native listeners +
-  // a readyState check instead of React's synthetic events, which can miss
-  // media events that fire during mount for a locally-served file.
+  // Detect when the mp4 is buffered enough to play.
   //
-  // On macOS (WKWebView), preload="auto" alone does not always trigger
-  // loading for files served from Tauri's custom protocol, so we call
-  // video.load() explicitly and add a timeout fallback in case the
-  // browser never fires loadeddata/canplaythrough.
+  // On macOS (WKWebView) the browser blocks video.load() and
+  // preload="auto" unless the element has the autoplay attribute.
+  // Adding autoplay lets WKWebView begin fetching and decoding the
+  // mp4 immediately; the video is still hidden (opacity-0) until
+  // showVideo flips true, so there's no visible side-effect.
   useEffect(() => {
     if (!loaderVideo) return;
     const video = videoRef.current;
@@ -53,16 +52,13 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
       return;
     }
 
-    // Force WKWebView (and other engines) to begin loading the video.
-    video.load();
-
     video.addEventListener('loadeddata', markReady);
     video.addEventListener('canplaythrough', markReady);
     video.addEventListener('error', markReady);
 
-    // Fallback: if the video never loads (e.g. macOS WKWebView blocks it),
-    // mark it ready after a short delay so the splash isn't stuck forever.
-    const fallback = setTimeout(markReady, 2000);
+    // Fallback: if the video never loads, mark it ready anyway so
+    // the splash isn't stuck forever.
+    const fallback = setTimeout(markReady, 3000);
 
     return () => {
       clearTimeout(fallback);
@@ -72,15 +68,16 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
     };
   }, [loaderVideo]);
 
-  // Start playback only once boot + backfill are done AND the video is ready,
-  // so the animation plays from frame 0 on an idle CPU instead of decoding
-  // invisibly (and competing for CPU) during the static loading phase.
+  // Once boot + backfill are done AND the video is ready, reveal the
+  // animation from frame 0.  On macOS the video may already be playing
+  // (autoplay), so we just reset currentTime; on other platforms we
+  // kick off play() explicitly.
   useEffect(() => {
     if (!playVideo || !videoReady) return;
     const video = videoRef.current;
     if (!video) return;
     video.currentTime = 0;
-    video.play().catch(() => {});
+    if (video.paused) video.play().catch(() => {});
   }, [playVideo, videoReady]);
 
   const showVideo = videoReady && playVideo;
@@ -100,6 +97,7 @@ export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScr
               muted
               loop
               playsInline
+              autoPlay
               preload="auto"
               aria-label="Prism Logo"
               className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
