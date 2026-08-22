@@ -46,8 +46,14 @@ ort-sys = "=2.0.0-rc.4"
 # at 2 threads. Stock fastembed spins up one thread per logical CPU, so the
 # embedding job that runs on every note save saturates all cores (~96% CPU
 # spike). See vendor/fastembed/src/text_embedding.rs.
+#
+# Also vendored: hf-hub 0.3.2 with a patch to `Api::metadata` so relative
+# `Location` redirect headers (HF/CloudFront) are resolved against the
+# endpoint instead of failing with `RelativeUrlWithoutBase`. See
+# vendor/hf-hub/src/api/sync.rs.
 [patch.crates-io]
 fastembed = { path = "vendor/fastembed" }
+hf-hub = { path = "vendor/hf-hub" }
 
 [target.'cfg(windows)'.dependencies]
 # Direct use of the WebView2 COM bindings (same version wry/tauri use) so the

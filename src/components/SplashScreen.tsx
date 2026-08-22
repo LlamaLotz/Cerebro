@@ -5,6 +5,8 @@ import whiteLogo from '../assets/logos/White.svg';
 interface SplashScreenProps {
   /** True while the app + vault are still booting; flips false when ready. */
   isLoading: boolean;
+  /** Flips true once boot + first-run backfill are done, to start the video. */
+  playVideo: boolean;
   /** Called after the fade-out completes so the parent can unmount this. */
   onFinish: () => void;
   /** Custom app icon id from the rainbow logo registry (falls back to default). */
@@ -12,16 +14,13 @@ interface SplashScreenProps {
 }
 
 /**
- * Startup splash overlay. Mounts on launch, shows the animated Prism logo
- * (an mp4 loader color-matched to the chosen logo), the product title, then
- * fades itself out and calls `onFinish` once `isLoading` goes false. The
- * parent unmounts it after the fade completes.
+ * Startup splash overlay. Shows the static white logo while the app boots and
+ * the first-run semantic backfill runs, then (once `playVideo` is true and the
+ * mp4 is buffered) swaps in the color-matched animated loader and plays it
+ * before fading out and calling `onFinish`.
  */
-export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
+export function SplashScreen({ isLoading, playVideo, onFinish, logo }: SplashScreenProps) {
   const [fade, setFade] = useState(false);
-  // Static (white no-rainbow) logo shows first; the animated loader swaps in
-  // only once the video has actually loaded and is ready to play, so the
-  // splash never stutters or flashes blank while the mp4 decodes.
   const [videoReady, setVideoReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -35,11 +34,9 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
 
   const loaderVideo = getSplashLoader(logo);
 
-  // Detect when the mp4 is actually playable. Uses native listeners + a
-  // readyState check instead of React's synthetic onLoadedData/onCanPlayThrough,
-  // which can miss media events that fire during mount for a locally-served
-  // file — in that case the video would never swap in and the static logo
-  // would stay forever.
+  // Detect when the mp4 is buffered enough to play. Uses native listeners +
+  // a readyState check instead of React's synthetic events, which can miss
+  // media events that fire during mount for a locally-served file.
   useEffect(() => {
     if (!loaderVideo) return;
     const video = videoRef.current;
@@ -52,13 +49,24 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
     }
     video.addEventListener('loadeddata', markReady);
     video.addEventListener('canplaythrough', markReady);
-    video.addEventListener('playing', markReady);
     return () => {
       video.removeEventListener('loadeddata', markReady);
       video.removeEventListener('canplaythrough', markReady);
-      video.removeEventListener('playing', markReady);
     };
   }, [loaderVideo]);
+
+  // Start playback only once boot + backfill are done AND the video is ready,
+  // so the animation plays from frame 0 on an idle CPU instead of decoding
+  // invisibly (and competing for CPU) during the static loading phase.
+  useEffect(() => {
+    if (!playVideo || !videoReady) return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    video.play().catch(() => {});
+  }, [playVideo, videoReady]);
+
+  const showVideo = videoReady && playVideo;
 
   return (
     <div
@@ -72,14 +80,13 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
             <video
               ref={videoRef}
               src={loaderVideo}
-              autoPlay
-              loop
               muted
+              loop
               playsInline
               preload="auto"
               aria-label="Prism Logo"
               className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-                videoReady ? 'opacity-100' : 'opacity-0'
+                showVideo ? 'opacity-100' : 'opacity-0'
               }`}
             />
           )}
@@ -87,7 +94,7 @@ export function SplashScreen({ isLoading, onFinish, logo }: SplashScreenProps) {
             src={loaderVideo ? whiteLogo : getAppIcon(logo)}
             alt="Prism Logo"
             className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-              loaderVideo && videoReady ? 'opacity-0' : 'opacity-100'
+              loaderVideo && showVideo ? 'opacity-0' : 'opacity-100'
             }`}
           />
         </div>

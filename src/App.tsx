@@ -208,23 +208,27 @@ export default function App() {
     applyWindowIcon(settings.appearance.appIcon);
   }, [settings.appearance.appIcon]);
 
-  // Startup splash: visible until settings load AND the vault's first index
-  // completes (or is skipped because no vault is connected), then fades out.
+  // Startup splash: the static logo shows while boot + first-run backfill run;
+  // once both are done the animated video plays (on a now-idle CPU), then the
+  // splash fades out. A timeout caps the static phase so a slow first-run
+  // backfill never stalls the intro.
   const [isBooting, setIsBooting] = useState(true);
+  const [playVideo, setPlayVideo] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
-  const splashMountedAtRef = useRef(Date.now());
   const settingsReadyRef = useRef(false);
   const vaultReadyRef = useRef(false);
-  const splashDismissedRef = useRef(false);
+  const backfillDoneRef = useRef(false);
+  const backfillTimedOutRef = useRef(false);
+  const playVideoStartedRef = useRef(false);
 
-  const requestSplashDismiss = () => {
-    if (splashDismissedRef.current) return;
+  const tryPlayVideo = () => {
+    if (playVideoStartedRef.current) return;
     if (!settingsReadyRef.current || !vaultReadyRef.current) return;
-    splashDismissedRef.current = true;
-    // Hold the splash for a full 7 seconds so the animated loader plays out
-    // as a deliberate intro instead of a flash.
-    const remaining = Math.max(0, 7000 - (Date.now() - splashMountedAtRef.current));
-    setTimeout(() => setIsBooting(false), remaining);
+    if (!backfillDoneRef.current && !backfillTimedOutRef.current) return;
+    playVideoStartedRef.current = true;
+    setPlayVideo(true);
+    // Let the animated logo play out before fading the splash away.
+    setTimeout(() => setIsBooting(false), 3000);
   };
 
   // Layout views: 'editor' | 'graph' | 'split' | 'topics'. Startup lands on
@@ -531,8 +535,11 @@ export default function App() {
       // Settings own the vault path; once loaded the splash can proceed if
       // there's no vault to index (otherwise it waits for the first fetchNotes).
       settingsReadyRef.current = true;
-      if (!merged.vaultPath) vaultReadyRef.current = true;
-      requestSplashDismiss();
+      if (!merged.vaultPath) {
+        vaultReadyRef.current = true;
+        backfillDoneRef.current = true; // no vault → nothing to embed
+      }
+      tryPlayVideo();
 
       // Apply startup-only appearance settings (these only affect launch state).
       setLayout(merged.appearance.startupView);
@@ -627,15 +634,32 @@ export default function App() {
       }
 
       setNotes(finalNotes);
-      // The SQLite index is fully populated by `index_vault` above, so the
-      // backfill can query it immediately (gated by the Linking setting
-      // `backfillOnVaultOpen`).
+
+      // First-run semantic backfill runs during the static splash phase (not
+      // after): the static logo renders cheaply under CPU load, and doing the
+      // embedding now means the app opens fully responsive. On later launches
+      // this is a no-op (embeddings already persisted in SQLite).
       if (settings.linking.backfillOnVaultOpen && !backfillRanRef.current) {
         backfillRanRef.current = true;
-        const count = await backfillEmbeddings();
-        console.log(`Semantic backfill complete: ${count} notes embedded.`);
-        // Refresh the Related Notes panel now that embeddings exist
-        setSemanticTick((t) => t + 1);
+        backfillEmbeddings()
+          .then((count) => {
+            console.log(`Semantic backfill complete: ${count} notes embedded.`);
+            backfillDoneRef.current = true;
+            setSemanticTick((t) => t + 1);
+            tryPlayVideo();
+          })
+          .catch((e) => {
+            console.error('Embedding backfill failed:', e);
+            backfillDoneRef.current = true;
+            tryPlayVideo();
+          });
+        // Cap the static phase: if the backfill is slow, play the video anyway.
+        setTimeout(() => {
+          backfillTimedOutRef.current = true;
+          tryPlayVideo();
+        }, 8000);
+      } else {
+        backfillDoneRef.current = true;
       }
 
       // Keep the index in sync reactively as files change on disk (once per
@@ -663,7 +687,7 @@ export default function App() {
     } finally {
       // First vault index (success or failure) unblocks the splash screen.
       vaultReadyRef.current = true;
-      requestSplashDismiss();
+      tryPlayVideo();
     }
   };
 
@@ -1398,6 +1422,7 @@ export default function App() {
       {splashVisible && (
         <SplashScreen
           isLoading={isBooting}
+          playVideo={playVideo}
           onFinish={() => setSplashVisible(false)}
           logo={settings.appearance.appIcon || undefined}
         />
