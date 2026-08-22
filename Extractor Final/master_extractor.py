@@ -73,7 +73,6 @@ REQUIRED_PACKAGES = [
     "numpy",
     "Pillow",
     "opencv-python",
-    "rapidocr-plugin-openvino",
     "pydantic-settings",
     "typer",
 ]
@@ -129,7 +128,6 @@ def auto_heal_environment():
         "numpy": "numpy",
         "PIL": "Pillow",
         "cv2": "opencv-python",
-        "rapidocr": "rapidocr-plugin-openvino",
         "pydantic_settings": "pydantic-settings",
         "typer": "typer",
         "requests": "requests",
