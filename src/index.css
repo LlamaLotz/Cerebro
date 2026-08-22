@@ -229,6 +229,12 @@ article {
     border-color: var(--color-brand-600);
     box-shadow: 0 0 6px var(--color-hover-glow-active);
   }
+  /* Title bar menu buttons: no glow, no border — text color only. */
+  button.titlebar-menu:hover,
+  button.titlebar-menu:active {
+    box-shadow: none !important;
+    border-color: transparent !important;
+  }
 }
 
 /* Hue slider in the custom accent picker: a crisp white-ring thumb so the

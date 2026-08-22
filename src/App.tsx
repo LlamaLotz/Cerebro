@@ -21,6 +21,7 @@ import { ResizeHandle } from './components/ResizeHandle';
 import { ContextMenu } from './components/ContextMenu';
 import { useDialog } from './components/DialogProvider';
 import { TitleBar } from './components/TitleBar';
+
 import { SplashScreen } from './components/SplashScreen';
 import { FileText, Network, PanelLeftClose, PanelLeftOpen, SplitSquareVertical, Sparkles, Tags } from 'lucide-react';
 
@@ -1272,6 +1273,16 @@ export default function App() {
             onLayoutChange={setLayout}
             showAI={showAICoPilot}
             onToggleAI={() => setShowAICoPilot(!showAICoPilot)}
+            onNewNote={handleNewNote}
+            onNewFolder={handleNewFolder}
+            onOpenPrism={() => setIsIngestModalOpen(true)}
+            onSettings={() => openSettings()}
+            onReload={() => tauriAPI.relaunchApp()}
+            onToggleIngestionLogs={() => {
+              setIngestionHidden(!isIngestionHidden);
+            }}
+            onToggleSidebar={toggleSidebar}
+            sidebarVisible={!sidebarCollapsed}
           />
 
       <div className="flex flex-1 overflow-hidden">
