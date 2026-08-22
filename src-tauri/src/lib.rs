@@ -10,6 +10,7 @@ mod config;
 mod db;
 mod engine;
 pub mod linker;
+pub mod menu;
 mod watcher;
 
 use linker::{LinkerEngine, NoteLinker, LinkMention};
@@ -1472,6 +1473,13 @@ pub fn run() {
                     }
                 });
             }
+            // Build the native application menu bar (File / Edit / View / Help).
+            // On macOS this renders in the system menu bar even with decorations off;
+            // on Windows it provides keyboard-shortcut handling.
+            let menu = menu::build_app_menu(app.handle())?;
+            app.set_menu(menu)?;
+            menu::setup_menu_handler(app);
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

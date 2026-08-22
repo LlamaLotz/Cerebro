@@ -316,7 +316,7 @@ export default function App() {
     localStorage.setItem('prism_ai_width', String(w));
   };
 
-  const { addLog, updateProgress } = useIngestion();
+  const { addLog, updateProgress, isHidden: isIngestionHidden, setHidden: setIngestionHidden } = useIngestion();
 
   // Debounced snapshot of the graph inputs: updates immediately on note switch,
   // but only after a typing pause (1s) when the active note is being edited,
@@ -488,6 +488,90 @@ export default function App() {
       if (graphDebounceRef.current) clearTimeout(graphDebounceRef.current);
       Object.values(embedTimersRef.current).forEach((t) => clearTimeout(t));
     };
+  }, []);
+
+  // Refs for stable menu-event handler access (avoids re-registering listeners
+  // when user-triggered handler functions change identity on every render).
+  const isIngestionHiddenRef = useRef(isIngestionHidden);
+  isIngestionHiddenRef.current = isIngestionHidden;
+  const menuHandlersRef = useRef({
+    handleNewNote: null as (() => void) | null,
+    handleNewFolder: null as (() => void) | null,
+    handleSelectVault: null as (() => void) | null,
+    toggleSidebar: null as (() => void) | null,
+  });
+
+  // Native menu-bar events from Rust (File / Edit / View / Help menus).
+  // Refs keep the listener callbacks current without re-subscribing.
+  useEffect(() => {
+    const unlisteners: Promise<() => void>[] = [];
+
+    unlisteners.push(
+      listen('menu://open-settings', () => {
+        setIsSettingsOpen(true);
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://reload-app', () => {
+        tauriAPI.relaunchApp();
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://new-note', () => {
+        menuHandlersRef.current.handleNewNote?.();
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://new-folder', () => {
+        menuHandlersRef.current.handleNewFolder?.();
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://open-prism', () => {
+        menuHandlersRef.current.handleSelectVault?.();
+      })
+    );
+
+    unlisteners.push(
+      listen<string>('menu://set-layout', (event) => {
+        const view = event.payload as 'editor' | 'graph' | 'topics';
+        setLayout(view);
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://toggle-ingestion-logs', () => {
+        setIngestionHidden(!isIngestionHiddenRef.current);
+        isIngestionHiddenRef.current = !isIngestionHiddenRef.current;
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://toggle-ai-sidebar', () => {
+        setShowAICoPilot((prev) => !prev);
+      })
+    );
+
+    unlisteners.push(
+      listen('menu://toggle-sidebar', () => {
+        menuHandlersRef.current.toggleSidebar?.();
+      })
+    );
+
+    unlisteners.push(
+      listen<string>('menu://open-url', (event) => {
+        window.open(event.payload, '_blank');
+      })
+    );
+
+    return () => {
+      unlisteners.forEach((p) => p.then((unlisten) => unlisten()));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 1. Load settings on startup. Rust (~/.prism/settings.json) is the source
@@ -914,6 +998,12 @@ export default function App() {
       fetchNotes();
     }
   };
+
+  // Keep menu-event refs current so native menu handlers call the latest code.
+  menuHandlersRef.current.handleNewNote = handleNewNote;
+  menuHandlersRef.current.handleNewFolder = handleNewFolder;
+  menuHandlersRef.current.handleSelectVault = handleSelectVault;
+  menuHandlersRef.current.toggleSidebar = toggleSidebar;
 
   // Delete a folder and EVERYTHING inside it. Double-gated: a name prompt
   // (so typos can't nuke a folder by accident) followed by a warning that
